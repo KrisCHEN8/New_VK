@@ -371,6 +371,23 @@ def preprocess(data, config=None):
     # separates morning (little accumulated) from afternoon (much accumulated)
     data["solar_acc"] = data["solar"].ewm(halflife=cfg["solar_halflife"], times=data.index).mean()
 
+    data = add_schedule(data, cfg)
+
+    # setpoint changes and recovery periods
+    sp = data["setpoint"].dropna()
+    change = sp.diff().abs() >= cfg["setpoint_change_min"]
+    data["setpoint_change"] = change.reindex(data.index, fill_value=False).astype(bool)
+    data["recovery"] = (data["setpoint_change"].astype(float)
+                        .rolling(cfg["recovery_window"], min_periods=1).max()
+                        .fillna(0).astype(bool))
+    print("\nSetpoint changes: "
+          f"{int(data['setpoint_change'].sum())}; samples marked 'recovery': "
+          f"{int(data['recovery'].sum())} ({data['recovery'].mean():.1%})")
+    return data
+
+
+def add_schedule(data, cfg):
+    """Add day_off (Swedish public holidays + extra_days_off), occupied and regime columns."""
     # regimes from the schedule (local time)
     idx = data.index
     to_min = lambda hhmm: int(hhmm.split(":")[0]) * 60 + int(hhmm.split(":")[1])
@@ -403,17 +420,6 @@ def preprocess(data, config=None):
     #     print((ct * 100).round(1).to_string())
     # else:
     #     print("\nNo CO2 data; occupancy agreement not computed.")
-
-    # setpoint changes and recovery periods
-    sp = data["setpoint"].dropna()
-    change = sp.diff().abs() >= cfg["setpoint_change_min"]
-    data["setpoint_change"] = change.reindex(data.index, fill_value=False).astype(bool)
-    data["recovery"] = (data["setpoint_change"].astype(float)
-                        .rolling(cfg["recovery_window"], min_periods=1).max()
-                        .fillna(0).astype(bool))
-    print("\nSetpoint changes: "
-          f"{int(data['setpoint_change'].sum())}; samples marked 'recovery': "
-          f"{int(data['recovery'].sum())} ({data['recovery'].mean():.1%})")
     return data
 
 
