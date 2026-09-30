@@ -22,8 +22,8 @@ CONFIG = {
         "outdoor_temperature": "T_out",
         "solar_radiation": "solar",
         "co2": "co2",
-        "heating": "heating",  # radiator valve position, 0-100%
-        "cooling": "cooling",  # chilled beam chilled water valve position, 0-100%
+        "heating": "radiator_valve",  # radiator valve position, 0-100%
+        "cooling": "chilled_water_valve",  # chilled beam chilled water valve position, 0-100%
         "VAV": "vav",    # chilled beam air damper position, 0-100%
         "VS02_supply": "vs_sup",
         "VS02_return": "vs_ret",
@@ -31,25 +31,32 @@ CONFIG = {
         "KB02_return": "kb_ret",
         "humidity": "RH",      # relative humidity, 0-100%, sensor is placed at supply air duct of the VAV system
     },
-    "context_cols": ["co2", "heating", "cooling", "vav", "vs_sup", "vs_ret", "kb_sup", "kb_ret", "RH"],
+    "context_cols": ["co2", "radiator_valve", "chilled_water_valve", "vav", "vs_sup", "vs_ret", "kb_sup", "kb_ret", "RH"],
 
     # features
     "T_out_short": "3h",
     "T_out_long": "24h",
     "solar_halflife": "4h",
     "lag": "30min",        # one sample, breaks the T_in controller loop
+    "setpoint_memory": "168h",   # setpoint one week earlier, lets the schedule model follow schedule changes
+    # delivered cooling of the chilled beam (water coil + primary air), see build_features
+    "beam_passive_frac": 0.3,    # coil capacity with the VAV damper closed, share of full induction
+    "supply_air_temp": 18.0,     # °C, primary air temperature (assumed, not measured)
+    "air_weight": 0.25,          # primary air cooling relative to the water coil, per % and °C
 
     # causal graph: node to parent feature columns
     "root_nodes": ["T_out", "solar", "co2", "RH"],    # independent variables, basically weather and occupancy
     "graph": {
+        "setpoint": ["setpoint_prev"] + _TIME,     # schedule: day type and time of day
         "vs_sup": ["T_out_short"] + _TIME,
         "kb_sup": ["T_out_short", "RH"] + _TIME,   # RH: chilled water kept above the dew point
-        "heating": ["T_in_lag", "setpoint", "T_out_short"] + _TIME,
-        "cooling": ["T_in_lag", "setpoint", "T_out_short"] + _TIME,
-        "vav": ["T_in_lag", "setpoint", "co2_lag", "T_out_short"] + _TIME,
-        "vs_ret": ["vs_sup", "heating", "T_out_short"],
-        "kb_ret": ["kb_sup", "cooling", "T_out_short"],
-        "T_in": ["T_out_short", "T_out_long", "solar_acc", "co2", "vav_lag",
+        # controllers act on the control error T_in(t-1) - setpoint(t); setpoint also sets the mode (office / night)
+        "radiator_valve": ["ctrl_err", "setpoint"] + _TIME,
+        "chilled_water_valve": ["ctrl_err", "setpoint"] + _TIME,
+        "vav": ["ctrl_err", "setpoint", "co2_lag", "T_out_short"] + _TIME,
+        "vs_ret": ["vs_sup", "radiator_valve", "T_out_short"],
+        "kb_ret": ["kb_sup", "chilled_water_valve", "T_out_short"],
+        "T_in": ["T_out_short", "T_out_long", "solar_acc", "co2",
                  "heat_del_lag", "cool_del_lag"] + _TIME,
     },
     "return_nodes": ["vs_ret", "kb_ret"],
@@ -57,11 +64,13 @@ CONFIG = {
 
     "feature_sources": {
         "T_out_short": ["T_out"], "T_out_long": ["T_out"], "solar_acc": ["solar"],
-        "co2_lag": ["co2"], "vav_lag": ["vav"], "T_in_lag": ["T_in"],
-        "heat_del_lag": ["heating", "vs_sup", "T_in"],
-        "cool_del_lag": ["cooling", "kb_sup", "T_in"],
+        "co2_lag": ["co2"], "setpoint_prev": ["setpoint"],
+        "ctrl_err": ["T_in", "setpoint"],
+        "heat_del_lag": ["radiator_valve", "vs_sup", "T_in"],
+        "cool_del_lag": ["chilled_water_valve", "vav", "kb_sup", "T_in"],
     },
-    "rs_drop_features": ["T_in_lag"],
+    "feedback_parents": ["T_in"],   # lagged T_in -> controllers, left out of the summary graph (DAG)
+    "min_abs_resid": {"setpoint": 0.2},   # smaller residuals count as normal (half-hour means of a setpoint step)
 
     # mechanism models
     "hgb_params": {"max_iter": 200, "learning_rate": 0.1, "random_state": 0},
@@ -72,8 +81,7 @@ CONFIG = {
     "score_threshold": 0.995,    # A(t) = 1 - min_i p_i
     "min_consecutive": 2,        # samples
     "event_max_gap_samples": 1,
-    "T_in_dev_min": 1.0,         # °C, mean abs(T_in - setpoint) for indoor-temperature events
-    "alpha": 0.5,                # Eq. (1)
+    "alpha": 0.5,
     "top_k": 3,
 
     # known cases:
@@ -84,7 +92,7 @@ CONFIG = {
         ("2024-09-06", "2024-09-06 00:00", "2024-09-07 00:00"),
     ],
     "night_window": ("00:00", "02:00"),
-    "night_heating_min": 30.0,   # % heating valve
+    "night_heating_min": 30.0,   # % radiator valve
 
     # output
     "heatmap_period": ("2024-08-12", "2024-08-19"),
@@ -142,7 +150,8 @@ def model_nodes(cfg):
 def build_features(data, cfg):
     """
     Add day type, hour (sin/cos), T_out means, accumulated solar, delivered
-    heating/cooling and the lagged parents to a copy of 'data'.
+    heating/cooling, the lagged parents, the control error and last week's
+    setpoint to a copy of 'data'.
     """
     d = cd.add_schedule(data.copy(), cfg)
     d["workday"] = (d.index.weekday.isin(cfg["occupied_weekdays"]) & ~d["day_off"]).astype(int)
@@ -154,26 +163,35 @@ def build_features(data, cfg):
         d[t_out_col(cfg, key)] = _rolling(d["T_out"], cfg[key], cfg)
     d["solar_acc"] = d["solar"].ewm(halflife=cfg["solar_halflife"], times=d.index).mean()
 
-    # approximate delivered heating/cooling: valve position * water-room temperature difference
-    d["heat_del"] = d["heating"] * (d["vs_sup"] - d["T_in"]).clip(lower=0)
-    d["cool_del"] = d["cooling"] * (d["T_in"] - d["kb_sup"]).clip(lower=0)
-    for c in ["T_in", "co2", "vav", "heat_del", "cool_del"]:
+    # approximate delivered heating: valve position * water-room temperature difference
+    d["heat_del"] = d["radiator_valve"] * (d["vs_sup"] - d["T_in"]).clip(lower=0)
+    # chilled beam, water coil: valve * water-room temperature difference, scaled by the induction
+    # from the primary air (VAV damper); with the damper closed only the passive share remains.
+    # primary air: damper * room-supply air temperature difference
+    beta = cfg["beam_passive_frac"]
+    water = (d["chilled_water_valve"] * (d["T_in"] - d["kb_sup"]).clip(lower=0)
+             * (beta + (1 - beta) * d["vav"] / 100))
+    air = d["vav"] * (d["T_in"] - cfg["supply_air_temp"]).clip(lower=0)
+    d["cool_del"] = water + cfg["air_weight"] * air
+    for c in ["T_in", "co2", "heat_del", "cool_del"]:
         d[f"{c}_lag"] = _lag(d[c], cfg["lag"])
+    d["ctrl_err"] = d["T_in_lag"] - d["setpoint"]
+    d["setpoint_prev"] = _lag(d["setpoint"], cfg["setpoint_memory"])
     return d
 
 
 def summary_graph(cfg):
     """
     Node to parent nodes of the summary graph used for root cause scores, and
-    the topological order (roots first). Lagged T_in to controller edges and
-    non-scored inputs (setpoint, hour, day type) are left out.
+    the topological order (roots first). Lagged feedback edges (T_in to the
+    controllers), self-loops and non-scored inputs (hour, day type) are left out.
     """
     nodes = cfg["root_nodes"] + model_nodes(cfg)
     parents = {n: [] for n in cfg["root_nodes"]}
     for node in model_nodes(cfg):
-        src = [s for f in cfg["graph"][node] if f not in cfg["rs_drop_features"]
-               for s in cfg["feature_sources"].get(f, [f])]
-        parents[node] = sorted({s for s in src if s in nodes and s != node})
+        src = [s for f in cfg["graph"][node] for s in cfg["feature_sources"].get(f, [f])]
+        parents[node] = sorted({s for s in src if s in nodes and s != node
+                                and s not in cfg["feedback_parents"]})
     order = list(graphlib.TopologicalSorter(parents).static_order())
     return parents, order
 
@@ -215,10 +233,13 @@ def score_nodes(d, cfg):
     """Return pred, resid and p-value DataFrames (one column per scored node)."""
     pred = root_baselines(d, cfg)
     for node in model_nodes(cfg):
-        print(f"  fitting {node:8s} <- {', '.join(cfg['graph'][node])}")
+        print(f"  fitting {node:19s} <- {', '.join(cfg['graph'][node])}")
         pred[node] = fit_mechanism(d, node, cfg["graph"][node], cfg)
     resid = d[pred.columns] - pred
     pval = resid.apply(empirical_pvalues)
+    for node, floor in cfg["min_abs_resid"].items():
+        if node in pval:
+            pval[node] = pval[node].mask(resid[node].abs() < floor, 1.0)
     return pred, resid, pval
 
 
@@ -270,10 +291,9 @@ def build_events(d, A, flagged, RS, cfg):
                "n_flagged": int((grp == g).sum()), "max_A": A.loc[start:end].max()}
         for i, (node, score) in enumerate(rs.items(), 1):
             row[f"cause_{i}"], row[f"rs_{i}"] = node, score
-        dev = seg["T_in"] - seg["setpoint"]
-        row.update({"dev_mean": dev.mean(), "abs_dev_mean": dev.abs().mean(),
+        row.update({"T_in_mean": seg["T_in"].mean(),
                     "T_out_mean": seg["T_out"].mean(), "solar_mean": seg["solar"].mean(),
-                    "cooling_mean": seg["cooling"].mean(), "kb_sup_mean": seg["kb_sup"].mean()})
+                    "chilled_water_valve_mean": seg["chilled_water_valve"].mean(), "kb_sup_mean": seg["kb_sup"].mean()})
         rows.append(row)
     events = pd.DataFrame(rows)
     events.index.name = "event_id"
@@ -281,11 +301,11 @@ def build_events(d, A, flagged, RS, cfg):
 
 
 def indoor_events(events, cfg):
-    """Events with mean |T_in - setpoint| > T_in_dev_min or T_in among the top-k causes."""
+    """Events with T_in among the top-k causes."""
     if events.empty:
         return events
     causes = events[[f"cause_{i}" for i in range(1, cfg["top_k"] + 1)]]
-    return events[(events["abs_dev_mean"] > cfg["T_in_dev_min"]) | (causes == "T_in").any(axis=1)]
+    return events[(causes == "T_in").any(axis=1)]
 
 
 # Step 4: plots
@@ -354,9 +374,6 @@ def plot_event(res, start, end, config=None):
         ax.plot(d.index, d[node], color="#1f3b73", lw=1.4, label="actual")
         ax.plot(pred.index, pred[node], color="#ff9f1c", lw=1.4, ls="--",
                 label="baseline" if node in cfg["root_nodes"] else "predicted")
-        if node == "T_in":
-            ax.plot(d.index, d["setpoint"], color="#808080", lw=1.2, ls=":", label="setpoint",
-                    drawstyle="steps-post")
         bad = S[node] > cfg["score_threshold"]
         ax.scatter(d.index[bad], d.loc[bad, node], s=24, c="#d7301f", zorder=3,
                    label="node anomalous" if bad.any() else None)
@@ -413,17 +430,17 @@ def check_known_cases(res, config=None):
     t0, t1 = cfg["night_window"]
     step = pd.Timedelta(cfg["resample_freq"])
     night = d.between_time(t0, t1, inclusive="left")
-    peak = night["heating"].groupby(night.index.date).max()
+    peak = night["radiator_valve"].groupby(night.index.date).max()
     spikes = peak[peak >= cfg["night_heating_min"]]
     rows = []
     for day, h in spikes.items():
         # window bounds from the tz-aware index (avoids DST-ambiguous local times)
         idx = night.index[night.index.date == day]
         s = summarize_window(res, idx[0], idx[-1] + step, cfg)
-        rows.append({"date": day, "heating_max": h, "n_flagged": s["n_flagged"],
+        rows.append({"date": day, "radiator_valve_max": h, "n_flagged": s["n_flagged"],
                      "max_A": s["max_A"], "top_cause": s["top"].index[0],
                      "top_causes": _fmt_top(s["top"])})
-    print(f"\nNights with heating >= {cfg['night_heating_min']:g} % between {t0} and {t1}: "
+    print(f"\nNights with radiator valve >= {cfg['night_heating_min']:g} % between {t0} and {t1}: "
           f"{len(rows)}")
     if rows:
         nights = pd.DataFrame(rows).set_index("date")
@@ -463,7 +480,7 @@ def run_causal(dfs, config=None):
     parents, order = summary_graph(cfg)
     print("Summary graph (node <- parents), topological order:")
     for n in order:
-        print(f"  {n:8s} <- {', '.join(parents[n]) or '-'}")
+        print(f"  {n:19s} <- {', '.join(parents[n]) or '-'}")
 
     print("\nMechanism models (blocked CV by calendar week):")
     pred, resid, pval = score_nodes(d, cfg)
