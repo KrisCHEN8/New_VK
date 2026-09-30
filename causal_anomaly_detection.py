@@ -29,8 +29,9 @@ CONFIG = {
         "VS02_return": "vs_ret",
         "KB02_supply": "kb_sup",
         "KB02_return": "kb_ret",
+        "humidity": "RH",      # relative humidity, 0-100%, sensor is placed at supply air duct of the VAV system
     },
-    "context_cols": ["co2", "heating", "cooling", "vav", "vs_sup", "vs_ret", "kb_sup", "kb_ret"],
+    "context_cols": ["co2", "heating", "cooling", "vav", "vs_sup", "vs_ret", "kb_sup", "kb_ret", "RH"],
 
     # features
     "T_out_short": "3h",
@@ -39,10 +40,10 @@ CONFIG = {
     "lag": "30min",        # one sample, breaks the T_in controller loop
 
     # causal graph: node to parent feature columns
-    "root_nodes": ["T_out", "solar", "co2"],    # independent variables, basically weather and occupancy
+    "root_nodes": ["T_out", "solar", "co2", "RH"],    # independent variables, basically weather and occupancy
     "graph": {
         "vs_sup": ["T_out_short"] + _TIME,
-        "kb_sup": ["T_out_short"] + _TIME,
+        "kb_sup": ["T_out_short", "RH"] + _TIME,   # RH: chilled water kept above the dew point
         "heating": ["T_in_lag", "setpoint", "T_out_short"] + _TIME,
         "cooling": ["T_in_lag", "setpoint", "T_out_short"] + _TIME,
         "vav": ["T_in_lag", "setpoint", "co2_lag", "T_out_short"] + _TIME,
@@ -65,7 +66,7 @@ CONFIG = {
     # mechanism models
     "hgb_params": {"max_iter": 200, "learning_rate": 0.1, "random_state": 0},
     "n_jobs": -1,
-    "root_window": "12h",        # rolling median baseline for T_out and solar
+    "root_window": "12h",        # rolling median baseline for T_out, solar and RH
 
     # detection
     "score_threshold": 0.995,    # A(t) = 1 - min_i p_i
@@ -88,6 +89,7 @@ CONFIG = {
     # output
     "heatmap_period": ("2024-08-12", "2024-08-19"),
     "heatmap_vmin": 0.9,         # S below this is drawn white
+    "csv_dir": "./analysis csv",  # event tables are written here
     "make_plots": True,
 }
 
@@ -193,10 +195,10 @@ def fit_mechanism(d, node, parents, cfg):
 
 
 def root_baselines(d, cfg):
-    """Expected values of the root nodes: co2 by hour and day type, T_out/solar by 24 h rolling median."""
+    """Expected values of the root nodes: co2 by hour and day type, T_out/solar/RH by root_window rolling median."""
     base = pd.DataFrame(index=d.index)
     base["co2"] = d["co2"].groupby([d.index.hour, d["workday"]]).transform("median")
-    for c in ["T_out", "solar"]:
+    for c in ["T_out", "solar", "RH"]:
         base[c] = _rolling(d[c], cfg["root_window"], cfg, how="median")
     return base[cfg["root_nodes"]]
 
@@ -435,18 +437,19 @@ def check_known_cases(res, config=None):
 
 
 # main workflow
-def print_events(events, title):
-    """Print an events table."""
-    print("\n" + "=" * 78 + f"\n{title}: {len(events)}\n" + "=" * 78)
-    if events.empty:
-        return
-    show = events.copy()
-    num = show.select_dtypes("number", exclude="timedelta").columns
-    show[num] = show[num].round(2)
-    show["start"] = show["start"].dt.strftime("%Y-%m-%d %H:%M")
-    show["end"] = show["end"].dt.strftime("%Y-%m-%d %H:%M")
-    with pd.option_context("display.width", 250, "display.max_rows", 500):
-        print(show.to_string())
+def export_events(events, title, path):
+    """Write an events table to csv (local times, duration in hours) and print where."""
+    out = events.copy()
+    if not out.empty:
+        num = out.select_dtypes("number", exclude="timedelta").columns
+        out[num] = out[num].round(3)
+        out["start"] = out["start"].dt.strftime("%Y-%m-%d %H:%M")
+        out["end"] = out["end"].dt.strftime("%Y-%m-%d %H:%M")
+        out["duration"] = out["duration"].dt.total_seconds() / 3600
+        out = out.rename(columns={"duration": "duration_h"})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(path)
+    print(f"{title}: {len(events)} -> {path}")
 
 
 def run_causal(dfs, config=None):
@@ -476,8 +479,9 @@ def run_causal(dfs, config=None):
     events_T_in = indoor_events(events, cfg)
     print(f"\nFlagged samples: {int(flagged.sum())} of {int(A.notna().sum())} "
           f"({flagged.sum() / A.notna().sum():.2%})")
-    print_events(events, "(a) All mechanism events")
-    print_events(events_T_in, "(b) Indoor-temperature events")
+    csv_dir = Path(cfg["csv_dir"])
+    export_events(events, "(a) All mechanism events", csv_dir / "causal_events_all.csv")
+    export_events(events_T_in, "(b) Indoor-temperature events", csv_dir / "causal_events_T_in.csv")
 
     res = {"data": d, "pred": pred[order], "resid": resid[order], "pval": pval[order],
            "S": S[order], "RS": RS, "A": A, "flagged": flagged, "events": events,
