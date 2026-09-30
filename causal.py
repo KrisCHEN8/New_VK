@@ -11,9 +11,10 @@ from sklearn.metrics import r2_score, mean_absolute_error
 import conditional_dist as cd
 
 
-_TIME = ["hour_sin", "hour_cos", "workday"]   # time-of-day and day-type features
+# keep only one of the hour data, either cos or sin 
+_TIME = ["hour_sin", "workday"]   # time-of-day and day-type features
 
-# tunable parameters (schedule, holidays and time zone come from conditional_dist.CONFIG)
+# Configuration
 CONFIG = {
     "key_map": {
         "indoor_temperature": "T_in",
@@ -21,9 +22,9 @@ CONFIG = {
         "outdoor_temperature": "T_out",
         "solar_radiation": "solar",
         "co2": "co2",
-        "heating": "heating",
-        "cooling": "cooling",
-        "VAV": "vav",
+        "heating": "heating",  # radiator valve position, 0-100%
+        "cooling": "cooling",  # chilled beam chilled water valve position, 0-100%
+        "VAV": "vav",    # chilled beam air damper position, 0-100%
         "VS02_supply": "vs_sup",
         "VS02_return": "vs_ret",
         "KB02_supply": "kb_sup",
@@ -35,46 +36,46 @@ CONFIG = {
     "T_out_short": "3h",
     "T_out_long": "24h",
     "solar_halflife": "4h",
-    "lag": "30min",              # one sample; breaks the T_in <-> controller loop
+    "lag": "30min",        # one sample, breaks the T_in controller loop
 
-    # causal graph: node -> parent feature columns (edit here)
-    "root_nodes": ["T_out", "solar", "co2"],
+    # causal graph: node to parent feature columns
+    "root_nodes": ["T_out", "solar", "co2"],    # independent variables, basically weather and occupancy
     "graph": {
-        "vs_sup": ["T_out_3h"] + _TIME,
-        "kb_sup": ["T_out_3h"] + _TIME,
-        "heating": ["T_in_lag", "setpoint", "T_out_3h"] + _TIME,
-        "cooling": ["T_in_lag", "setpoint", "T_out_3h"] + _TIME,
-        "vav": ["T_in_lag", "setpoint", "co2_lag", "T_out_3h"] + _TIME,
-        "vs_ret": ["vs_sup", "heating", "T_out_3h"],
-        "kb_ret": ["kb_sup", "cooling", "T_out_3h"],
-        "T_in": ["T_out_3h", "T_out_24h", "solar_acc", "co2", "vav_lag",
+        "vs_sup": ["T_out_short"] + _TIME,
+        "kb_sup": ["T_out_short"] + _TIME,
+        "heating": ["T_in_lag", "setpoint", "T_out_short"] + _TIME,
+        "cooling": ["T_in_lag", "setpoint", "T_out_short"] + _TIME,
+        "vav": ["T_in_lag", "setpoint", "co2_lag", "T_out_short"] + _TIME,
+        "vs_ret": ["vs_sup", "heating", "T_out_short"],
+        "kb_ret": ["kb_sup", "cooling", "T_out_short"],
+        "T_in": ["T_out_short", "T_out_long", "solar_acc", "co2", "vav_lag",
                  "heat_del_lag", "cool_del_lag"] + _TIME,
     },
     "return_nodes": ["vs_ret", "kb_ret"],
-    "include_returns": False,    # circuits likely serve many rooms
-    # which graph nodes a derived feature comes from (anything else maps to itself)
+    "include_returns": False,
+
     "feature_sources": {
-        "T_out_3h": ["T_out"], "T_out_24h": ["T_out"], "solar_acc": ["solar"],
+        "T_out_short": ["T_out"], "T_out_long": ["T_out"], "solar_acc": ["solar"],
         "co2_lag": ["co2"], "vav_lag": ["vav"], "T_in_lag": ["T_in"],
         "heat_del_lag": ["heating", "vs_sup", "T_in"],
         "cool_del_lag": ["cooling", "kb_sup", "T_in"],
     },
-    "rs_drop_features": ["T_in_lag"],   # no T_in -> controller edges in the summary graph
+    "rs_drop_features": ["T_in_lag"],
 
     # mechanism models
     "hgb_params": {"max_iter": 200, "learning_rate": 0.1, "random_state": 0},
     "n_jobs": -1,
-    "root_window": "24h",        # rolling median baseline for T_out and solar
+    "root_window": "12h",        # rolling median baseline for T_out and solar
 
     # detection
     "score_threshold": 0.995,    # A(t) = 1 - min_i p_i
     "min_consecutive": 2,        # samples
     "event_max_gap_samples": 1,
-    "T_in_dev_min": 1.0,         # °C, mean |T_in - setpoint| for indoor-temperature events
+    "T_in_dev_min": 1.0,         # °C, mean abs(T_in - setpoint) for indoor-temperature events
     "alpha": 0.5,                # Eq. (1)
     "top_k": 3,
 
-    # known cases: (label, start, end), local time, end exclusive
+    # known cases:
     "cases": [
         ("2024-04-01", "2024-04-01 00:00", "2024-04-02 00:00"),
         ("2024-07-22 office hours", "2024-07-22 08:00", "2024-07-22 18:00"),
@@ -82,10 +83,10 @@ CONFIG = {
         ("2024-09-06", "2024-09-06 00:00", "2024-09-07 00:00"),
     ],
     "night_window": ("00:00", "02:00"),
-    "night_heating_min": 15.0,   # % heating valve = "spike"
+    "night_heating_min": 30.0,   # % heating valve
 
     # output
-    "heatmap_period": ("2024-09-02", "2024-09-09"),
+    "heatmap_period": ("2024-08-12", "2024-08-19"),
     "heatmap_vmin": 0.9,         # S below this is drawn white
     "make_plots": True,
 }
@@ -93,8 +94,21 @@ CONFIG = {
 
 # Helpers
 def _merge_config(config=None):
-    """CONFIG on top of conditional_dist.CONFIG, then the user overrides in 'config'."""
-    return cd._merge_config(config, base=cd._merge_config(CONFIG, base=cd.CONFIG))
+    """
+    CONFIG on top of conditional_dist.CONFIG, then the user overrides in 'config'.
+    The placeholders T_out_short / T_out_long in graph and feature_sources are
+    replaced by the column names, e.g. T_out_3h / T_out_24h.
+    """
+    cfg = cd._merge_config(config, base=cd._merge_config(CONFIG, base=cd.CONFIG))
+    names = {key: t_out_col(cfg, key) for key in ("T_out_short", "T_out_long")}
+    cfg["graph"] = {n: [names.get(f, f) for f in feats] for n, feats in cfg["graph"].items()}
+    cfg["feature_sources"] = {names.get(f, f): src for f, src in cfg["feature_sources"].items()}
+    return cfg
+
+
+def t_out_col(cfg, key):
+    """Column name of the T_out rolling mean for 'T_out_short' or 'T_out_long', e.g. T_out_3h."""
+    return f"T_out_{cfg[key]}"
 
 
 def _lag(s, lag):
@@ -110,7 +124,7 @@ def _rolling(s, window, cfg, how="mean"):
 
 
 def _window(obj, start, end):
-    """Rows of obj with start <= t < end (strings are local time)."""
+    """Rows of obj with start <= t < end."""
     tz = obj.index.tz
     start, end = cd._localize(start, tz), cd._localize(end, tz)
     return obj[(obj.index >= start) & (obj.index < end)]
@@ -134,11 +148,11 @@ def build_features(data, cfg):
     d["hour_sin"] = np.sin(2 * np.pi * hour / 24)
     d["hour_cos"] = np.cos(2 * np.pi * hour / 24)
 
-    d["T_out_3h"] = _rolling(d["T_out"], cfg["T_out_short"], cfg)
-    d["T_out_24h"] = _rolling(d["T_out"], cfg["T_out_long"], cfg)
+    for key in ("T_out_short", "T_out_long"):
+        d[t_out_col(cfg, key)] = _rolling(d["T_out"], cfg[key], cfg)
     d["solar_acc"] = d["solar"].ewm(halflife=cfg["solar_halflife"], times=d.index).mean()
 
-    # approximate delivered heating/cooling: valve position x water-room temperature difference
+    # approximate delivered heating/cooling: valve position * water-room temperature difference
     d["heat_del"] = d["heating"] * (d["vs_sup"] - d["T_in"]).clip(lower=0)
     d["cool_del"] = d["cooling"] * (d["T_in"] - d["kb_sup"]).clip(lower=0)
     for c in ["T_in", "co2", "vav", "heat_del", "cool_del"]:
@@ -148,8 +162,8 @@ def build_features(data, cfg):
 
 def summary_graph(cfg):
     """
-    Node -> parent nodes of the summary graph used for root cause scores, and
-    the topological order (roots first). Lagged T_in -> controller edges and
+    Node to parent nodes of the summary graph used for root cause scores, and
+    the topological order (roots first). Lagged T_in to controller edges and
     non-scored inputs (setpoint, hour, day type) are left out.
     """
     nodes = cfg["root_nodes"] + model_nodes(cfg)
@@ -207,7 +221,7 @@ def score_nodes(d, cfg):
 
 
 def mechanism_metrics(d, pred):
-    """Cross-validated R² and MAE per node (out-of-fold for models, baseline for roots)."""
+    """Cross-validated R^2 and MAE per node (out-of-fold for models, baseline for roots)."""
     rows = []
     for node in pred.columns:
         ok = d[node].notna() & pred[node].notna()
@@ -226,7 +240,7 @@ def flag_samples(A, cfg):
 
 
 def root_cause_scores(S, parents, order, alpha):
-    """Eq. (1): RS_i = S_i + alpha * mean(RS of children of i), children first."""
+    """RS_i = S_i + alpha * mean(RS of children of i), children nodes first."""
     children = {n: [c for c in order if n in parents[c]] for n in order}
     RS = pd.DataFrame(index=S.index, columns=order, dtype=float)
     for node in reversed(order):
