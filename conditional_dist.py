@@ -19,9 +19,10 @@ CONFIG = {
         "VAV": "vav",
         "co2": "co2",
         "humidity": "RH_sup",
+        "KB02_supply": "kb_sup",
     },
     "core_cols": ["T_in", "setpoint", "T_out", "solar"],
-    "context_cols": ["heating", "cooling", "vav", "co2", "RH_sup"],
+    "context_cols": ["heating", "cooling", "vav", "co2", "RH_sup", "kb_sup"],
     "value_col": ['value'],
     "time_col": "observationTime",
     "naive_tz": "UTC",
@@ -45,16 +46,17 @@ CONFIG = {
     "occupied_start": "08:00",
     "occupied_end": "18:00",
     "public_holidays": True,         # Swedish public holidays (holidays.Sweden) are unoccupied
-    "extra_days_off": [],          # local dates "YYYY-MM-DD"
-    "co2_occupied_threshold": 400.0,   # ppm, this is defined by myself
+    "extra_days_off": [],          # "YYYY-MM-DD"
+    "co2_occupied_threshold": 400.0,   # ppm
 
     # Setpoint-change recovery
     "setpoint_change_min": 0.2,  # °C; smaller steps are ignored
     "recovery_window": "30min",
 
-    # binning
-    "T_out_bin_width": 2.0,  # °C
-    "T_out_bin_edges": None,     # explicit list overrides the width
+    # binning (per regime): bin_col x solar_col
+    "bin_col": "kb_sup",      # KB02 supply temperature
+    "bin_width": 0.5,         # °C
+    "bin_edges": None,        # explicit edges override bin_width
     "solar_bin_edges": [-np.inf, 50.0, 200.0, np.inf],   # applied to solar_col
     "solar_bin_labels": ["low", "mid", "high"],
 
@@ -63,7 +65,7 @@ CONFIG = {
     "mad_floor": 0.1,         # °C, applied to the raw MAD
     "min_bin_count": 50,
 
-    # flagging 
+    # flagging
     "z_threshold": 3.5,
     "min_abs_residual": 0.5,         # °C, abs(dev - bin_median)
 
@@ -90,6 +92,7 @@ CONFIG = {
         "vav": (-1.0, 101.0),
         "co2": (250.0, 5000.0),
         "RH_sup": (0.0, 100.0),
+        "kb_sup": (5.0, 35.0),
     },
 
     # output
@@ -424,12 +427,12 @@ def add_schedule(data, cfg):
 
 
 # Step 2: binning
-def make_T_out_edges(values, config=None):
-    """Return T_out bin edges: CONFIG['T_out_bin_edges'] or width-aligned edges covering `values`."""
+def make_bin_edges(values, config=None):
+    """Return bin edges: CONFIG['bin_edges'] or width-aligned edges covering `values`."""
     cfg = _merge_config(config)
-    if cfg["T_out_bin_edges"] is not None:
-        return np.asarray(cfg["T_out_bin_edges"], dtype=float)
-    w = cfg["T_out_bin_width"]
+    if cfg["bin_edges"] is not None:
+        return np.asarray(cfg["bin_edges"], dtype=float)
+    w = cfg["bin_width"]
     v = pd.Series(values).dropna()
     lo = np.floor(v.min() / w) * w
     hi = np.floor(v.max() / w) * w + w
@@ -438,34 +441,34 @@ def make_T_out_edges(values, config=None):
 
 def assign_bins(data, config=None):
     """
-    Add T_out_bin (label), T_out_bin_left (float) and solar_bin (label) to copy of 'data'
+    Add bin (label) and bin_left (float) of CONFIG['bin_col'] and solar_bin (label)
+    to copy of 'data'
     """
     cfg = _merge_config(config)
     data = data.copy()
-    edges = make_T_out_edges(data["T_out_3h"], cfg)
+    x = data[cfg["bin_col"]]
+    edges = make_bin_edges(x, cfg)
     labels = [f"[{a:g}, {b:g})" for a, b in zip(edges[:-1], edges[1:])]
-    t_bin = pd.cut(data["T_out_3h"], bins=edges, right=False, labels=labels)
-    data["T_out_bin"] = t_bin.astype(object)
-    data["T_out_bin_left"] = pd.cut(data["T_out_3h"], bins=edges, right=False,
-                                    labels=edges[:-1]).astype(float)
+    data["bin"] = pd.cut(x, bins=edges, right=False, labels=labels).astype(object)
+    data["bin_left"] = pd.cut(x, bins=edges, right=False, labels=edges[:-1]).astype(float)
     data["solar_bin"] = pd.cut(data[cfg["solar_col"]], bins=cfg["solar_bin_edges"], right=False,
                                labels=cfg["solar_bin_labels"]).astype(object)
     return data
 
 
 # Step 3: per-bin robust statistics
-BIN_KEYS = ["regime", "T_out_bin_left", "solar_bin"]
+BIN_KEYS = ["regime", "bin_left", "solar_bin"]
 
 
 def _eligible(data, target="dev"):
     """Points usable for bin statistics: valid target and bins, not in recovery."""
-    return (data[target].notna() & data["T_out_bin_left"].notna()
+    return (data[target].notna() & data["bin_left"].notna()
             & data["solar_bin"].notna() & ~data["recovery"])
 
 
 def compute_bin_stats(data, config=None):
     """
-    Per (regime, T_out bin, solar bin): count, median and MAD of target_col,
+    Per (regime, bin_col bin, solar bin): count, median and MAD of target_col,
     the floored MAD used for z-scores, and whether the bin has enough data.
     Recovery points are excluded.
     """
@@ -481,13 +484,13 @@ def compute_bin_stats(data, config=None):
     stats["sufficient"] = stats["count"] >= cfg["min_bin_count"]
     stats = stats.reset_index()
 
-    labels = (data.dropna(subset=["T_out_bin_left"])
-              .drop_duplicates("T_out_bin_left")
-              .set_index("T_out_bin_left")["T_out_bin"])
-    stats.insert(1, "T_out_bin", stats["T_out_bin_left"].map(labels))
+    labels = (data.dropna(subset=["bin_left"])
+              .drop_duplicates("bin_left")
+              .set_index("bin_left")["bin"])
+    stats.insert(1, "bin", stats["bin_left"].map(labels))
     stats["solar_bin"] = pd.Categorical(stats["solar_bin"], categories=cfg["solar_bin_labels"],
                                         ordered=True)
-    stats = stats.sort_values(["regime", "T_out_bin_left", "solar_bin"]).reset_index(drop=True)
+    stats = stats.sort_values(BIN_KEYS).reset_index(drop=True)
     stats["solar_bin"] = stats["solar_bin"].astype(object)
     return stats
 
@@ -520,7 +523,7 @@ def flag_anomalies(data, bin_stats, config=None):
     data["direction"] = np.where(data["anomaly"], np.sign(data["residual"]), 0).astype(int)
 
     status = pd.Series("normal", index=data.index, dtype=object)
-    missing = data[tgt].isna() | data["T_out_bin_left"].isna() | data["solar_bin"].isna()
+    missing = data[tgt].isna() | data["bin_left"].isna() | data["solar_bin"].isna()
     status[elig & ~data["bin_sufficient"]] = "insufficient_data"
     status[data["recovery"] & ~missing] = "recovery"
     status[missing] = "missing"
@@ -668,30 +671,30 @@ def plot_dev_heatmap(data, vmax=None):
 
 
 def plot_dev_scatter(data, config=None):
-    """Scatter of target_col vs T_out coloured by solar_col, one panel per regime, anomalies ringed."""
+    """Scatter of target_col vs bin_col coloured by solar_col, one panel per regime, anomalies ringed."""
     cfg = _merge_config(config)
-    tgt, sol = cfg["target_col"], cfg["solar_col"]
+    tgt, sol, x = cfg["target_col"], cfg["solar_col"], cfg["bin_col"]
     fig, axes = plt.subplots(1, 2, figsize=(13, 5), sharey=True)
     vmax = np.nanpercentile(data[sol], 99) if data[sol].notna().any() else 1
     sc = None
     for ax, reg in zip(axes, REGIMES):
         d = data[data["regime"] == reg]
         ok = d[d["status"].isin(["normal", "insufficient_data"])]
-        sc = ax.scatter(ok["T_out_3h"], ok[tgt], c=ok[sol], cmap="YlOrRd",
+        sc = ax.scatter(ok[x], ok[tgt], c=ok[sol], cmap="YlOrRd",
                         vmin=0, vmax=vmax, s=8, alpha=0.6, linewidths=0)
         rec = d[d["status"] == "recovery"]
-        ax.scatter(rec["T_out_3h"], rec[tgt], s=8, c="#b0b0b0", alpha=0.5,
+        ax.scatter(rec[x], rec[tgt], s=8, c="#b0b0b0", alpha=0.5,
                    linewidths=0, label="recovery (excluded)")
         an = d[d["anomaly"]]
-        ax.scatter(an["T_out_3h"], an[tgt], s=36, facecolors="none", edgecolors="#1f3b73",
+        ax.scatter(an[x], an[tgt], s=36, facecolors="none", edgecolors="#1f3b73",
                    linewidths=1.2, label=f"anomaly (n={len(an)})")
-        # vertical gridlines at the T_out bin edges
-        for e in make_T_out_edges(data["T_out_3h"], cfg):
+        # vertical gridlines at the bin edges
+        for e in make_bin_edges(data[x], cfg):
             ax.axvline(e, color="#e5e5e5", lw=0.6, zorder=0)
         if tgt == "dev":
             ax.axhline(0, color="#808080", lw=0.8)
         ax.set_title(f"{reg} (n={d[tgt].notna().sum()})")
-        ax.set_xlabel("T_out, 2 h moving average [°C]")
+        ax.set_xlabel(f"{x} [°C]")
         ax.legend(loc="upper right", fontsize=8, frameon=False)
     axes[0].set_ylabel("dev = T_in - setpoint [°C]" if tgt == "dev" else "T_in [°C]")
     sol_label = (f"solar weighted accumulation {cfg['solar_halflife']} [W/m²]" if sol == "solar_acc"
@@ -702,26 +705,31 @@ def plot_dev_scatter(data, config=None):
 
 
 def plot_bin_grids(bin_stats, config=None):
-    """Heatmaps over the bin grid per regime: sample count and median dev (insufficient bins shaded)."""
+    """Heatmaps over the bin grid per regime: sample count and median target_col (insufficient bins shaded)."""
     cfg = _merge_config(config)
     solar_labels = cfg["solar_bin_labels"]
-    lefts = np.sort(bin_stats["T_out_bin_left"].unique())
-    w = np.diff(lefts).min() if len(lefts) > 1 else cfg["T_out_bin_width"]
-    fig, axes = plt.subplots(2, 2, figsize=(max(10, 0.6 * len(lefts) * 2), 7), squeeze=False)
-    med_lim = max(0.5, np.nanpercentile(bin_stats["median"].abs(), 98)) if len(bin_stats) else 1
+    lefts = np.sort(bin_stats["bin_left"].unique())
+    w = np.diff(lefts).min() if len(lefts) > 1 else cfg["bin_width"]
+    fig, axes = plt.subplots(2, 2, figsize=(max(10, 0.35 * len(lefts) * 2), 7), squeeze=False)
+    if cfg["target_col"] == "dev":
+        med_lim = max(0.5, np.nanpercentile(bin_stats["median"].abs(), 98)) if len(bin_stats) else 1
+        med_cmap, med_range = "RdBu_r", (-med_lim, med_lim)
+    else:
+        med_cmap = "RdYlBu_r"
+        med_range = tuple(np.nanpercentile(bin_stats["median"], [2, 98])) if len(bin_stats) else (0, 1)
 
     for r, reg in enumerate(REGIMES):
         s = bin_stats[bin_stats["regime"] == reg]
-        cnt = s.pivot(index="solar_bin", columns="T_out_bin_left", values="count") \
+        cnt = s.pivot(index="solar_bin", columns="bin_left", values="count") \
                .reindex(index=solar_labels, columns=lefts)
-        med = s.pivot(index="solar_bin", columns="T_out_bin_left", values="median") \
+        med = s.pivot(index="solar_bin", columns="bin_left", values="median") \
                .reindex(index=solar_labels, columns=lefts)
-        suff = s.pivot(index="solar_bin", columns="T_out_bin_left", values="sufficient") \
+        suff = s.pivot(index="solar_bin", columns="bin_left", values="sufficient") \
                 .reindex(index=solar_labels, columns=lefts)
         for c, (grid, cmap, vmin, vmax, title) in enumerate([
             (cnt, "Blues", 0, np.nanmax(cnt.values) if np.isfinite(cnt.values).any() else 1,
              "sample count"),
-            (med, "RdBu_r", -med_lim, med_lim, f"median {cfg['target_col']} [°C]"),
+            (med, med_cmap, *med_range, f"median {cfg['target_col']} [°C]"),
         ]):
             ax = axes[r, c]
             ax.set_facecolor("#eeeeee")
@@ -733,8 +741,8 @@ def plot_bin_grids(bin_stats, config=None):
                     if pd.isna(val):
                         continue
                     ok = bool(suff.values[i, j])
-                    txt = f"{int(val)}" if c == 0 else f"{val:+.1f}"
-                    ax.text(j, i, txt, ha="center", va="center", fontsize=7,
+                    txt = f"{int(val)}" if c == 0 else f"{val:.1f}"
+                    ax.text(j, i, txt, ha="center", va="center", fontsize=6, rotation=90,
                             color="#222222" if ok else "#888888")
                     if not ok:
                         ax.add_patch(plt.Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False,
@@ -742,8 +750,8 @@ def plot_bin_grids(bin_stats, config=None):
             ax.set_yticks(range(len(solar_labels)))
             ax.set_yticklabels(solar_labels)
             ax.set_xticks(range(len(lefts)))
-            ax.set_xticklabels([f"{a:g}" for a in lefts], fontsize=7)
-            ax.set_xlabel(f"T_out_3h bin, left edge [°C] (width {w:g})")
+            ax.set_xticklabels([f"{a:g}" for a in lefts], fontsize=7, rotation=90)
+            ax.set_xlabel(f"{cfg['bin_col']} bin, left edge [°C] (width {w:g})")
             ax.set_ylabel(cfg["solar_col"])
             ax.set_title(f"{reg}: {title}  (shaded = < {cfg['min_bin_count']} samples)")
             fig.colorbar(im, ax=ax)
@@ -953,8 +961,8 @@ def pick_anomaly_days(data, config=None, min_scored_frac=0.8, T_out_tol=2.0, sol
     """
     cfg = _merge_config(config)
     d = data.loc[_working_days(data, cfg)]
-    d = d[d.index.month.isin((7, 8, 9))]
-    d = d[d.index.weekday.isin((2, 3, 4, 5, 6, 7))]
+    # d = d[d.index.month.isin((7, 8, 9))]
+    # d = d[d.index.weekday.isin((2, 3, 4, 5, 6, 7))]
     day = pd.Index(d.index.date, name="date")
     per_day = pd.DataFrame({
         "anomalies": d["anomaly"].groupby(day).sum().astype(int),
@@ -1121,13 +1129,13 @@ def run_analysis(dfs, config=None, strict=True):
         figure_dir.mkdir(parents=True, exist_ok=True)
         # plot_dev_heatmap(data).savefig(figure_dir / "dev_heatmap.png", dpi=300,
         #                                bbox_inches="tight")
-        scatter_name = f"{cfg['target_col']}_{cfg['solar_col']}_scatter.png"
-        # plot_dev_scatter(data, cfg).savefig(figure_dir / scatter_name, dpi=300,
-        #                                     bbox_inches="tight")
-        plot_anomaly_days(data, cfg).savefig(figure_dir / f"{cfg['target_col']}_anomaly_days.png",
+        prefix = f"{cfg['target_col']}_{cfg['bin_col']}_{cfg['solar_col']}"
+        plot_dev_scatter(data, cfg).savefig(figure_dir / f"{prefix}_scatter.png", dpi=300,
+                                            bbox_inches="tight")
+        plot_anomaly_days(data, cfg).savefig(figure_dir / f"{prefix}_anomaly_days.png",
                                              dpi=300, bbox_inches="tight")
-        # plot_bin_grids(bin_stats, cfg).savefig(figure_dir / "bin_grids.png", dpi=300,
-        #                                         bbox_inches="tight")
+        plot_bin_grids(bin_stats, cfg).savefig(figure_dir / f"{prefix}_bin_grids.png", dpi=300,
+                                                bbox_inches="tight")
         # plot_z_working_days(data, cfg).savefig(figure_dir / "z_working_days.png", dpi=300,
         #                                        bbox_inches="tight")
         # plot_anomaly_hours(data, cfg).savefig(figure_dir / "anomaly_hours.png", dpi=300,
