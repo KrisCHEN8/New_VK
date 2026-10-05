@@ -9,7 +9,7 @@ import conditional_dist as cd
 import causal_anomaly_detection as cad
 
 
-# Configuration (graph, features and models come from causal_anomaly_detection.CONFIG)
+# Configuration
 CONFIG = {
     "target": "T_in",
 
