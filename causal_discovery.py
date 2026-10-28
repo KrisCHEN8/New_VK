@@ -212,7 +212,7 @@ def plot_causal_graph(impact, edges, parents, order, config=None):
                     arrowprops=dict(arrowstyle="-|>", color="#1f3b73", alpha=0.75,
                                     lw=0.6 + 5 * e["strength"] / s_max, mutation_scale=12,
                                     shrinkA=28, shrinkB=28, connectionstyle=f"arc3,rad={rad}"))
-    # lagged feedback T_in(t-1) -> controllers (not quantified, not part of the DAG)
+    # lagged feedback T_in(t-1)
     for c in cad.model_nodes(cfg):
         if c != tgt and any(tgt in cfg["feature_sources"].get(f, [f]) for f in cfg["graph"][c]):
             ax.annotate("", xy=pos[c], xytext=pos[tgt],
