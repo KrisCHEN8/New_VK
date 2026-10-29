@@ -44,7 +44,7 @@ CONFIG = {
     "supply_air_temp": 18.0,     # °C, primary air temperature (assumed, not measured)
     "air_weight": 0.25,          # primary air cooling relative to the water coil, per % and °C
 
-    # causal graph: node to parent feature columns
+    # Graphical causal model (GCM) defination
     "root_nodes": ["T_out", "solar", "co2", "RH"],    # independent variables, basically weather and occupancy
     "graph": {
         "setpoint": ["setpoint_prev"] + _TIME,     # schedule: day type and time of day
