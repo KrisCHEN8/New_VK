@@ -11,8 +11,8 @@ from sklearn.metrics import r2_score, mean_absolute_error
 import conditional_dist as cd
 
 
-# keep only one of the hour data, either cos or sin 
-_TIME = ["hour_sin", "workday"]   # time-of-day and day-type features
+# time-of-day and day-type features
+_TIME = ["hour_sin", "workday"]   
 
 # Configuration
 CONFIG = {
@@ -36,12 +36,12 @@ CONFIG = {
     # features
     "T_out_short": "3h",
     "T_out_long": "24h",
-    "solar_halflife": "4h",
+    "solar_halflife": "2h",
     "lag": "30min",        # one sample, breaks the T_in controller loop
     "setpoint_memory": "168h",   # setpoint one week earlier, lets the schedule model follow schedule changes
     # delivered cooling of the chilled beam (water coil + primary air), see build_features
-    "beam_passive_frac": 0.3,    # coil capacity with the VAV damper closed, share of full induction
-    "supply_air_temp": 18.0,     # °C, primary air temperature (assumed, not measured)
+    "beam_passive_frac": 0.2,    # cooling capacity with the VAV damper closed (only natural convection)
+    "supply_air_temp": 18.0,     # °C, primary air temperature
     "air_weight": 0.25,          # primary air cooling relative to the water coil, per % and °C
 
     # Graphical causal model (GCM) defination
