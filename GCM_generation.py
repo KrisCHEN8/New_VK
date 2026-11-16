@@ -1,5 +1,8 @@
 from pathlib import Path
+import re
+
 import numpy as np
+import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -7,50 +10,92 @@ import holidays
 
 
 T = "indoor_temperature"
+CAL = "calendar"
+CAL_FEATURES = ["hour_sin", "hour_cos", "workday"]
 
-# parent, child, feature columns names
+# parent, child, feature column names
 EDGES = [
-    # the supply temperature in radiator circuit is determined by outsoor temperature
-    ("outdoor_temperature", "VS02_supply", ["outdoor_temperature"]),
+    # set-point curves
+    ("outdoor_temperature", "VS02_supply", ["outdoor_temperature"]),        # VS02 heatingc urve
+    ("relative_humidity", "KB02_supply", ["relative_humidity_lag1"]),       # chilled setpoint to avoid condensation
+    ("outdoor_temperature", "AHU_supply_temperature", ["outdoor_temperature"]),  # AHU setpoint curve
 
-    # control actuators inside the room
+    # room controllers react to the room within the same 30-min interval
     (T, "cooling_valve", [T]),
     (T, "heating_valve", [T]),
     (T, "VAV_damper", [T]),
-    ("co2", "VAV_damper", ["co2"]),
+    ("co2", "VAV_damper", ["co2"]),    # demand-controlled ventilation
+    (CAL, "cooling_valve", CAL_FEATURES),   # schedules, night setback
+    (CAL, "heating_valve", CAL_FEATURES),
+    (CAL, "VAV_damper", CAL_FEATURES),
+    # ("setpoint", "cooling_valve", ["setpoint"]),        # the setpoint of roo temeprature
+    # ("setpoint", "heating_valve", ["setpoint"]),
 
     # # hydraulics, same interval
     # ("cooling_valve", "cooling_flow", ["cooling_valve"]),
     # ("heating_valve", "heating_flow", ["heating_valve"]),
 
-    # physical effects on the room
-    (T, T, [f"{T}_lag1"]),                                               # thermal inertia
-    ("cooling_valve", T, ["cooling_valve_lag1"]),                          # chilled beam, faster
+    # physical effects on the room (delayed)
+    (T, T, [f"{T}_lag1"]),                                                  # thermal inertia
+    ("cooling_valve", T, ["cooling_valve_lag1"]),                           # chilled beam, faster
     ("KB02_supply", T, ["KB02_supply_lag1"]),
-    ("relative_humidity", "KB02_supply", ["humidity_lag1"]),
     ("heating_valve", T, ["heating_valve_lag1", "heating_valve_lag2"]),     # radiator, slower
     ("VS02_supply", T, ["VS02_supply_lag1", "VS02_supply_lag2"]),
     ("VAV_damper", T, ["VAV_damper_lag1"]),
-    ("co2", T, ["co2", "co2_lag1"]),                                     # occupancy proxy
-    ("solar_radiation", T, ["solar_radiation_ma4"]),                     # 2-hour moving average, 4 * 30mins
-    ("outdoor_temperature", T, ["outdoor_temperature_ma6"]),            # 3-hour moving average, 6 * 30mins
+    ("AHU_supply_temperature", T, ["AHU_supply_temperature_lag1"]),
+    ("solar_radiation", T, ["solar_radiation_ma4"]),                        # 2-hour moving average, 4 * 30 min
+    ("outdoor_temperature", T, ["outdoor_temperature_ma6"]),                # 3-hour moving average, 6 * 30 min
+
+    # proxies for unmeasured drivers of the room temperature
+    ("co2", T, ["co2", "co2_lag1"]),                                        # occupants
+    (CAL, T, CAL_FEATURES),                                                 # scheduled internal gains
 ]
 
-# Measured variables that are irrelevant 
+# Interaction terms of a mechanism: name -> formula over that mechanism's input columns.
+# Emitters only act through the product of opening and temperature difference.
+INTERACTIONS = {
+    T: {
+        "cooling_drive": "cooling_valve_lag1 * (indoor_temperature_lag1 - KB02_supply_lag1)",
+        "heating_drive": ("(heating_valve_lag1 + heating_valve_lag2) / 2"
+                          " * ((VS02_supply_lag1 + VS02_supply_lag2) / 2 - indoor_temperature_lag1)"),
+        "ventilation_drive": "VAV_damper_lag1 * (AHU_supply_temperature_lag1 - indoor_temperature_lag1)",
+    },
+}
+
+# Expected sign of a design-matrix column's effect on its node (+1 / -1), for monotone mechanisms.
+# Columns not listed are unconstrained. Check the controller signs against your control sequences.
+MONOTONE = {
+    T: {
+        f"{T}_lag1": +1, "solar_radiation_ma4": +1, "outdoor_temperature_ma6": +1,
+        "cooling_drive": -1, "heating_drive": +1, "ventilation_drive": +1,
+    },
+    "cooling_valve": {T: +1},
+    "heating_valve": {T: -1},
+    "VS02_supply": {"outdoor_temperature": -1},
+}
+
+# Measured variables that are irrelevant
 EXCLUDED = {
     "VS02_return": "circuit-level return, mixes all rooms on the circuit",
     "KB02_return": "circuit-level return, mixes all rooms on the circuit",
 }
 
-
 # Configuration
 CONFIG = {
     "target": T,
     "edges": EDGES,
+    "interactions": INTERACTIONS,
+    "monotone": MONOTONE,
     "excluded": EXCLUDED,
-    "lag_node_sources": [T],
-    "lag_label": "t-1",
-    "time_inputs": ["hour_sin", "workday"],   # non-node inputs of every non-root mechanism
+    "lag_node_sources": [T, "cooling_valve", "heating_valve", "VAV_damper"],   # variables in a loop with the target
+    "proxy_nodes": ["co2", CAL],          # edges from these into the target stand for unmeasured drivers
+    "calendar_node": CAL,
+    "calendar_features": CAL_FEATURES,
+    "display_names": {"co2": "co2\n(occupancy proxy)", CAL: "calendar\n(hour, workday)"},
+    "freq": "30min",
+    "country": "SE",                      # public holidays for 'workday'
+    "regime_valves": {"heating": "heating_valve", "cooling": "cooling_valve"},
+    "valve_active_threshold": 5.0,        # daily mean opening above which an emitter counts as active (% open; use 0.05 for 0-1 signals)
     "figure_name": "causal_dag.png",
     "make_plots": True,
 }
@@ -62,43 +107,180 @@ def _merge_config(config=None):
     return {**CONFIG, **(config or {})}
 
 
+def _feature_lags(var, feat, cfg):
+    """Time lags (in intervals) that the feature column 'feat' of the variable 'var' covers."""
+    if var == cfg["calendar_node"]:
+        if feat not in cfg["calendar_features"]:
+            raise ValueError(f"calendar feature '{feat}' is not in calendar_features")
+        return [0]
+    if feat == var:
+        return [0]
+    m = re.fullmatch(rf"{re.escape(var)}_(lag|ma)(\d+)", feat)
+    if not m:
+        raise ValueError(f"feature '{feat}' of '{var}' must be '{var}', '{var}_lag<k>' or '{var}_ma<w>'")
+    k = int(m.group(2))
+    return [k] if m.group(1) == "lag" else list(range(k))
+
+
+def _lag_node_name(var, lags):
+    return f"{var}({', '.join(f't-{k}' for k in sorted(lags))})"
+
+
 # causal graph
 def build_gcm(config=None):
     """
     Causal DAG of the GCM as a networkx DiGraph, from the edge list in CONFIG.
-    Node attributes: 'root' (no parents), 'layer' (longest path from a root)
-    and 'inputs' (non-node features such as hour and day type).
-    Edge attribute 'features': the parent's feature columns used by the child.
-    Edges into the target are lagged (physical effects); all other edges are
-    within the same 30-min interval. Every edge that leaves a node in
-    'lag_node_sources' starts from its lag node instead, e.g.
-    indoor_temperature(t-1), which has the attribute 'lag_of' = its node family.
+    Node attributes: 'root' (no parents), 'layer' (longest path from a root), 'label' (display name),
+    'interactions' and 'monotone' (mechanism settings, see design_matrix), 'lag_of' (lag nodes only),
+    and 'inputs' (kept empty: the time inputs are now the calendar node).
+    Edge attributes: 'features' (the parent's columns used by the child) and 'kind':
+    'physical' (into the target), 'proxy' (into the target from a proxy node) or 'control'.
     """
     cfg = _merge_config(config)
-    lagged = {s: f"{s}({cfg['lag_label']})" for s in cfg["lag_node_sources"]}
+    tgt, lag_sources = cfg["target"], set(cfg["lag_node_sources"])
 
-    G = nx.DiGraph(target=cfg["target"])
+    # lag of every feature, and the routing of each edge
+    routed, lag_node_lags = [], {}
+    for parent, child, feats in cfg["edges"]:
+        lags = [min(_feature_lags(parent, f, cfg)) for f in feats]
+        if parent in lag_sources and min(lags) >= 1:
+            lag_node_lags.setdefault(parent, set()).update(k for f in feats for k in _feature_lags(parent, f, cfg))
+            routed.append((parent, child, feats, True))
+        elif parent in lag_sources and max(lags) >= 1:
+            raise ValueError(f"edge {parent} -> {child} mixes same-interval and lagged columns {feats}; "
+                             "split it into two edges")
+        else:
+            routed.append((parent, child, feats, False))
+
+    G = nx.DiGraph(target=tgt)
     children = {child for _, child, _ in cfg["edges"]}
-    for parent, child, _ in cfg["edges"]:
+    names = cfg["display_names"]
+    for parent, child, _, _ in routed:
         for n in (parent, child):
             if n not in G:
-                root = n not in children
-                G.add_node(n, root=root, inputs=[] if root else list(cfg["time_inputs"]))
-    for parent, child, feats in cfg["edges"]:
-        if parent not in lagged:
+                G.add_node(n, root=n not in children, inputs=[], label=names.get(n, n))
+    for parent, child, feats, via_lag in routed:
+        if not via_lag:
             G.add_edge(parent, child, features=list(feats))
     if not nx.is_directed_acyclic_graph(G):
-        raise ValueError(f"causal graph has a cycle: {nx.find_cycle(G)}")
+        raise ValueError(f"same-interval edges form a cycle {nx.find_cycle(G)}: add the variable that acts "
+                         "back on the loop with a delay to 'lag_node_sources'")
     for k, layer in enumerate(nx.topological_generations(G)):
         for n in layer:
             G.nodes[n]["layer"] = k
 
     # lag nodes
-    for parent, child, feats in cfg["edges"]:
-        if parent in lagged:
-            G.add_node(lagged[parent], root=False, inputs=[], lag_of=parent, layer=G.nodes[parent]["layer"])
-            G.add_edge(lagged[parent], child, features=list(feats))
+    for parent, child, feats, via_lag in routed:
+        if via_lag:
+            lag = _lag_node_name(parent, lag_node_lags[parent])
+            if lag not in G:
+                G.add_node(lag, root=True, inputs=[], lag_of=parent, layer=G.nodes[parent]["layer"], label=lag)
+            G.add_edge(lag, child, features=list(feats))
+
+    # edge kinds
+    for u, v in G.edges:
+        src = G.nodes[u].get("lag_of", u)
+        G.edges[u, v]["kind"] = ("control" if v != tgt else "proxy" if src in cfg["proxy_nodes"] else "physical")
+
+    # mechanism settings, checked against each node's inputs
+    for n in G:
+        if G.in_degree(n) == 0:
+            continue
+        inputs = mechanism_inputs(G, n)
+        inter = dict(cfg["interactions"].get(n, {}))
+        for name, expr in inter.items():
+            missing = set(re.findall(r"[A-Za-z_]\w*", expr)) - set(inputs)
+            if missing:
+                raise ValueError(f"interaction '{name}' of {n} uses {sorted(missing)}, which are not inputs of {n}")
+        mono = dict(cfg["monotone"].get(n, {}))
+        unknown = set(mono) - set(inputs) - set(inter)
+        if unknown:
+            raise ValueError(f"monotone constraint on {sorted(unknown)}, which are not columns of {n}'s mechanism")
+        G.nodes[n].update(interactions=inter, monotone=mono)
     return G
+
+
+# mechanisms
+def mechanism_inputs(G, node):
+    """Feature columns of the node's mechanism, in edge order, without duplicates."""
+    cols = [f for _, _, feats in G.in_edges(node, data="features") for f in feats]
+    return list(dict.fromkeys(cols))
+
+
+def edge_bundles(G, node):
+    """Parent -> feature columns, i.e. what is permuted together when that edge is cut."""
+    return {u: list(f) for u, _, f in G.in_edges(node, data="features")}
+
+
+def design_matrix(G, node, inputs):
+    """
+    Mechanism inputs plus the node's interaction terms, computed from 'inputs' (a frame holding the
+    columns of mechanism_inputs). Call it again after permuting an edge bundle, so interactions follow.
+    """
+    X = inputs[mechanism_inputs(G, node)].copy()
+    for name, expr in G.nodes[node]["interactions"].items():
+        X[name] = X.eval(expr)
+    return X
+
+
+def monotone_constraints(G, node, columns):
+    """Signs for the design-matrix columns, e.g. for HistGradientBoostingRegressor(monotonic_cst=...)."""
+    return [G.nodes[node]["monotone"].get(c, 0) for c in columns]
+
+
+def node_frame(G, node, feats):
+    """Rows with complete data for one mechanism: target series y and design matrix X."""
+    cols = list(dict.fromkeys([node] + mechanism_inputs(G, node)))
+    data = feats[cols].dropna()
+    return data[node], design_matrix(G, node, data)
+
+
+# data
+def make_features(df, G, config=None):
+    """
+    All columns the GCM needs, from raw data with a DatetimeIndex. The index is put on a regular
+    grid first, so a gap in the data gives NaN lags instead of shifting values across the gap.
+    """
+    cfg = _merge_config(config)
+    df = df.sort_index().asfreq(cfg["freq"])
+    raw = [n for n in G if "lag_of" not in G.nodes[n] and n != cfg["calendar_node"]]
+    missing = [c for c in raw if c not in df]
+    if missing:
+        raise KeyError(f"raw data lacks the columns {missing}")
+
+    out = df[raw].copy()
+    for u, _, feats in G.edges(data="features"):
+        var = G.nodes[u].get("lag_of", u)
+        for f in feats:
+            if f in out or var == cfg["calendar_node"]:
+                continue
+            kind, k = re.fullmatch(rf"{re.escape(var)}_(lag|ma)(\d+)", f).groups()
+            k = int(k)
+            out[f] = df[var].shift(k) if kind == "lag" else df[var].rolling(k, min_periods=k).mean()
+
+    if cfg["calendar_node"] in G:
+        idx = df.index
+        hour = idx.hour + idx.minute / 60
+        out["hour_sin"] = np.sin(2 * np.pi * hour / 24)
+        out["hour_cos"] = np.cos(2 * np.pi * hour / 24)
+        hol = holidays.country_holidays(cfg["country"], years=range(idx.year.min(), idx.year.max() + 1))
+        out["workday"] = ((idx.dayofweek < 5) & ~pd.Index(idx.date).isin(list(hol))).astype(float)
+    return out
+
+
+def label_regimes(df, config=None):
+    """
+    Operating regime of every row, decided per day from the daily mean valve openings:
+    'heating', 'cooling', 'both' or 'neither'. Fit and quantify the mechanisms per regime.
+    """
+    cfg = _merge_config(config)
+    thr = cfg["valve_active_threshold"]
+    daily = df[list(cfg["regime_valves"].values())].resample("D").mean()
+    heat = daily[cfg["regime_valves"]["heating"]] > thr
+    cool = daily[cfg["regime_valves"]["cooling"]] > thr
+    day = pd.Series(np.select([heat & cool, heat, cool], ["both", "heating", "cooling"], "neither"),
+                    index=daily.index)
+    return pd.Series(day.reindex(df.index.normalize()).to_numpy(), index=df.index, name="regime")
 
 
 # plot
@@ -155,25 +337,28 @@ def _draw_edge(ax, boxes, u, v, rad, label=None, **arrow):
 
 
 def _edge_label(G, parent, features):
-    """Lags / moving averages of the parent used by the child, e.g. 'lag1, lag2' or 'ma12'; None if the node says it."""
+    """Lags / moving averages of the parent used by the child, e.g. 'lag1, lag2' or 'ma4'; None if the node says it."""
     name = G.nodes[parent].get("lag_of", parent)
-    if parent != name or features == [name]:
-        return None   # edge from a lag node, or same-interval edge
+    if parent != name or features == [name] or name == CONFIG["calendar_node"]:
+        return None   # edge from a lag node, same-interval edge, or calendar inputs
     return ", ".join("lag0" if f == name else f.removeprefix(name + "_") for f in features)
+
+
+EDGE_STYLE = {"physical": "-", "control": "--", "proxy": ":"}
 
 
 def plot_dag(G):
     """
     Layered DAG, roots on the left; edge labels = lags or moving averages of the parent (none = same interval).
-    Lag nodes (dashed outline) sit below their node family.
+    Lag nodes (dashed outline) sit below their node family. Line style = edge kind.
     """
     tgt = G.graph["target"]
     lag_of = nx.get_node_attributes(G, "lag_of")
     pos = _layout(G)
-    fig, ax = plt.subplots(figsize=(13, 7.5), layout="constrained")
+    fig, ax = plt.subplots(figsize=(14, 8.5), layout="constrained")
     xs, ys = zip(*pos.values())
-    ax.set_xlim(min(xs) - 0.3, max(xs) + 0.3)
-    ax.set_ylim(min(ys) - 1.1, max(ys) + 0.6)   # room below for the edges from the lag nodes
+    ax.set_xlim(min(xs) - 0.35, max(xs) + 0.35)
+    ax.set_ylim(min(ys) - 1.1, max(ys) + 0.6)   # room below for the legend
     ax.axis("off")
 
     # nodes: roots, mechanisms, target, lag nodes
@@ -188,28 +373,26 @@ def plot_dag(G):
             fc, ec, color = "#fde3c4", "#ff9f1c", "#222222"
         else:
             fc, ec, color = "#eef2f9", "#1f3b73", "#222222"
-        boxes[n] = ax.text(x, y, n, ha="center", va="center", fontsize=10, color=color, zorder=3,
-                           bbox=dict(boxstyle="round,pad=0.5", fc=fc, ec=ec, lw=0.8, ls=ls))
+        boxes[n] = ax.text(x, y, G.nodes[n]["label"], ha="center", va="center", fontsize=10, color=color,
+                           zorder=3, bbox=dict(boxstyle="round,pad=0.5", fc=fc, ec=ec, lw=0.8, ls=ls))
     fig.canvas.draw()   # box sizes are needed to clip the arrows
 
     # edges; edges that skip a layer take the curvature that passes best between the middle nodes
-    for u, v, f in G.edges(data="features"):
-        _draw_edge(ax, boxes, u, v, _pick_rad(ax, pos, u, v), _edge_label(G, u, f),
-                   color="#1f3b73", alpha=0.75, lw=1.2)
+    for u, v, d in G.edges(data=True):
+        _draw_edge(ax, boxes, u, v, _pick_rad(ax, pos, u, v), _edge_label(G, u, d["features"]),
+                   color="#1f3b73", alpha=0.75, lw=1.2, linestyle=EDGE_STYLE[d["kind"]])
 
-    inputs = sorted({f for n in G for f in G.nodes[n]["inputs"]})
     handles = [Line2D([], [], color="#ff9f1c", marker="s", ls="", ms=10, mfc="#fde3c4", label="root node"),
-               Line2D([], [], color="#1f3b73", lw=1.5,
-                      label="causal edge (label: lag / moving average; none = same interval)")]
+               Line2D([], [], color="#1f3b73", lw=1.5, ls="-", label="physical effect on the room"),
+               Line2D([], [], color="#1f3b73", lw=1.5, ls="--", label="control / set-point curve"),
+               Line2D([], [], color="#1f3b73", lw=1.5, ls=":", label="proxy for unmeasured drivers")]
     if lag_of:
         handles.append(Line2D([], [], color="#1f3b73", marker="s", ls="", ms=10, mfc="white", mew=0.8,
-                              label="lag node: previous value of the node above it"))
-    ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.05), ncol=3, fontsize=8,
-              frameon=False)
-    title = "Graphical Causal Model (30-min data)"
-    # if inputs:
-    #     title += f"; every non-root mechanism also takes {', '.join(inputs)}"
-    ax.set_title(title, loc="left")
+                              label="lag node: earlier values of the node above it"))
+    ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.06), ncol=5, fontsize=8,
+              frameon=False, title="edge label: lags / moving average of the parent (none = same interval)",
+              title_fontsize=8)
+    ax.set_title("Graphical Causal Model (30-min data)", loc="left")
     return fig
 
 
@@ -223,8 +406,10 @@ def run_gcm(config=None):
     for n in nx.topological_sort(G):
         if n in lag_of:
             continue
-        ps = [f"{p} ({', '.join(f)})" for p, _, f in G.in_edges(n, data="features")]
-        print(f"  {n:19s} <- {', '.join(ps) or '-'}")
+        ps = [f"{p} ({', '.join(d['features'])}) [{d['kind']}]" for p, _, d in G.in_edges(n, data=True)]
+        print(f"  {n:22s} <- {', '.join(ps) or '-'}")
+        for name, expr in G.nodes[n].get("interactions", {}).items():
+            print(f"  {'':22s}    + {name} = {expr}")
     print("Lag nodes:", ", ".join(f"{n} (of {fam})" for n, fam in lag_of.items()) or "-")
     print("Not in the DAG:", ", ".join(cfg["excluded"]))
 
