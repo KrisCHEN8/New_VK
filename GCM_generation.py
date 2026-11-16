@@ -16,17 +16,17 @@ CAL_FEATURES = ["hour_sin", "hour_cos", "workday"]
 # parent, child, feature column names
 EDGES = [
     # set-point curves
-    ("outdoor_temperature", "VS02_supply", ["outdoor_temperature"]),        # VS02 heatingc urve
-    ("relative_humidity", "KB02_supply", ["relative_humidity_lag1"]),       # chilled setpoint to avoid condensation
+    ("outdoor_temperature", "VS02_supply", ["outdoor_temperature"]),     # VS02 heating curve
+    ("relative_humidity", "KB02_supply", ["relative_humidity_lag1"]),       # chilled water setpoint to avoid condensation
     ("outdoor_temperature", "AHU_supply_temperature", ["outdoor_temperature"]),  # AHU setpoint curve
 
-    # room controllers react to the room within the same 30-min interval
+    # room controllers react to the room with rather fast response
     (T, "cooling_valve", [T]),
     (T, "heating_valve", [T]),
     (T, "VAV_damper", [T]),
     ("co2", "VAV_damper", ["co2"]),    # demand-controlled ventilation
-    (CAL, "cooling_valve", CAL_FEATURES),   # schedules, night setback
-    (CAL, "heating_valve", CAL_FEATURES),
+    # (CAL, "cooling_valve", CAL_FEATURES),     # schedules, night setback
+    # (CAL, "heating_valve", CAL_FEATURES),
     (CAL, "VAV_damper", CAL_FEATURES),
     # ("setpoint", "cooling_valve", ["setpoint"]),        # the setpoint of roo temeprature
     # ("setpoint", "heating_valve", ["setpoint"]),
@@ -36,7 +36,7 @@ EDGES = [
     # ("heating_valve", "heating_flow", ["heating_valve"]),
 
     # physical effects on the room (delayed)
-    (T, T, [f"{T}_lag1"]),                                                  # thermal inertia
+    (T, T, [f"{T}_lag1"]),                                          # thermal inertia
     ("cooling_valve", T, ["cooling_valve_lag1"]),                           # chilled beam, faster
     ("KB02_supply", T, ["KB02_supply_lag1"]),
     ("heating_valve", T, ["heating_valve_lag1", "heating_valve_lag2"]),     # radiator, slower
@@ -51,23 +51,33 @@ EDGES = [
     (CAL, T, CAL_FEATURES),                                                 # scheduled internal gains
 ]
 
-# Interaction terms of a mechanism: name -> formula over that mechanism's input columns.
-# Emitters only act through the product of opening and temperature difference.
+
+# Components: the variables that act on the room together through one emitter.
+# Their edges into the room are cut together when the strength of the component is quantified.
+COMPONENTS = {
+    "chilled_beam": ["cooling_valve", "KB02_supply", "VAV_damper", "AHU_supply_temperature"],
+    "radiator": ["heating_valve", "VS02_supply"],
+}
+
+# Emitters' joint effects, per component
 INTERACTIONS = {
     T: {
-        "cooling_drive": "cooling_valve_lag1 * (indoor_temperature_lag1 - KB02_supply_lag1)",
-        "heating_drive": ("(heating_valve_lag1 + heating_valve_lag2) / 2"
-                          " * ((VS02_supply_lag1 + VS02_supply_lag2) / 2 - indoor_temperature_lag1)"),
-        "ventilation_drive": "VAV_damper_lag1 * (AHU_supply_temperature_lag1 - indoor_temperature_lag1)",
+        # chilled beam, air side: heat removed by the primary air
+        "chilled_beam_air": "VAV_damper_lag1 * (indoor_temperature_lag1 - AHU_supply_temperature_lag1)",
+        # chilled beam, water side: heat removed by the coil; its capacity grows with the primary air flow
+        "chilled_beam_water": ("cooling_valve_lag1 * VAV_damper_lag1"
+                               " * (indoor_temperature_lag1 - KB02_supply_lag1)"),
+        # radiator: heat supplied
+        "radiator_drive": ("(heating_valve_lag1 + heating_valve_lag2) / 2"
+                           " * ((VS02_supply_lag1 + VS02_supply_lag2) / 2 - indoor_temperature_lag1)"),
     },
 }
 
-# Expected sign of a design-matrix column's effect on its node (+1 / -1), for monotone mechanisms.
-# Columns not listed are unconstrained. Check the controller signs against your control sequences.
+# Monotonic effects
 MONOTONE = {
     T: {
-        f"{T}_lag1": +1, "solar_radiation_ma4": +1, "outdoor_temperature_ma6": +1,
-        "cooling_drive": -1, "heating_drive": +1, "ventilation_drive": +1,
+        "solar_radiation_ma4": +1, "outdoor_temperature_ma6": +1,
+        "chilled_beam_air": -1, "chilled_beam_water": -1, "radiator_drive": +1,
     },
     "cooling_valve": {T: +1},
     "heating_valve": {T: -1},
@@ -84,6 +94,7 @@ EXCLUDED = {
 CONFIG = {
     "target": T,
     "edges": EDGES,
+    "components": COMPONENTS,
     "interactions": INTERACTIONS,
     "monotone": MONOTONE,
     "excluded": EXCLUDED,
@@ -91,11 +102,11 @@ CONFIG = {
     "proxy_nodes": ["co2", CAL],          # edges from these into the target stand for unmeasured drivers
     "calendar_node": CAL,
     "calendar_features": CAL_FEATURES,
-    "display_names": {"co2": "co2\n(occupancy proxy)", CAL: "calendar\n(hour, workday)"},
+    "display_names": {CAL: "calendar\n(hour, workday)"},
     "freq": "30min",
     "country": "SE",                      # public holidays for 'workday'
     "regime_valves": {"heating": "heating_valve", "cooling": "cooling_valve"},
-    "valve_active_threshold": 5.0,        # daily mean opening above which an emitter counts as active (% open; use 0.05 for 0-1 signals)
+    # "valve_active_threshold": 5.0,        # daily mean opening above which an emitter counts as active (% open; use 0.05 for 0-1 signals)
     "figure_name": "causal_dag.png",
     "make_plots": True,
 }
@@ -128,14 +139,6 @@ def _lag_node_name(var, lags):
 
 # causal graph
 def build_gcm(config=None):
-    """
-    Causal DAG of the GCM as a networkx DiGraph, from the edge list in CONFIG.
-    Node attributes: 'root' (no parents), 'layer' (longest path from a root), 'label' (display name),
-    'interactions' and 'monotone' (mechanism settings, see design_matrix), 'lag_of' (lag nodes only),
-    and 'inputs' (kept empty: the time inputs are now the calendar node).
-    Edge attributes: 'features' (the parent's columns used by the child) and 'kind':
-    'physical' (into the target), 'proxy' (into the target from a proxy node) or 'control'.
-    """
     cfg = _merge_config(config)
     tgt, lag_sources = cfg["target"], set(cfg["lag_node_sources"])
 
@@ -177,12 +180,17 @@ def build_gcm(config=None):
                 G.add_node(lag, root=True, inputs=[], lag_of=parent, layer=G.nodes[parent]["layer"], label=lag)
             G.add_edge(lag, child, features=list(feats))
 
-    # edge kinds
+    # edge kinds and components
+    component_of = {var: comp for comp, members in cfg["components"].items() for var in members}
+    unknown = set(component_of) - {G.nodes[n].get("lag_of", n) for n in G}
+    if unknown:
+        raise ValueError(f"components list {sorted(unknown)}, which are not variables of the graph")
     for u, v in G.edges:
         src = G.nodes[u].get("lag_of", u)
+        G.edges[u, v]["component"] = component_of.get(src)
         G.edges[u, v]["kind"] = ("control" if v != tgt else "proxy" if src in cfg["proxy_nodes"] else "physical")
 
-    # mechanism settings, checked against each node's inputs
+    # mechanism settings
     for n in G:
         if G.in_degree(n) == 0:
             continue
@@ -207,15 +215,22 @@ def mechanism_inputs(G, node):
     return list(dict.fromkeys(cols))
 
 
-def edge_bundles(G, node):
-    """Parent -> feature columns, i.e. what is permuted together when that edge is cut."""
-    return {u: list(f) for u, _, f in G.in_edges(node, data="features")}
+def edge_bundles(G, node, by_component=True):
+    """
+    Feature columns to permute together when an edge is cut. With by_component, the edges of one
+    component (chilled beam, radiator) form a single bundle keyed by the component name; the other
+    edges, and all edges with by_component=False, are keyed by the parent.
+    """
+    bundles = {}
+    for u, _, d in G.in_edges(node, data=True):
+        key = d["component"] if by_component and d["component"] else u
+        bundles.setdefault(key, []).extend(f for f in d["features"] if f not in bundles[key])
+    return bundles
 
 
 def design_matrix(G, node, inputs):
     """
-    Mechanism inputs plus the node's interaction terms, computed from 'inputs' (a frame holding the
-    columns of mechanism_inputs). Call it again after permuting an edge bundle, so interactions follow.
+    Mechanism inputs plus the node's interaction terms, computed from 'inputs'
     """
     X = inputs[mechanism_inputs(G, node)].copy()
     for name, expr in G.nodes[node]["interactions"].items():
@@ -224,7 +239,7 @@ def design_matrix(G, node, inputs):
 
 
 def monotone_constraints(G, node, columns):
-    """Signs for the design-matrix columns, e.g. for HistGradientBoostingRegressor(monotonic_cst=...)."""
+    """Signs for the design-matrix columns."""
     return [G.nodes[node]["monotone"].get(c, 0) for c in columns]
 
 
@@ -406,7 +421,8 @@ def run_gcm(config=None):
     for n in nx.topological_sort(G):
         if n in lag_of:
             continue
-        ps = [f"{p} ({', '.join(d['features'])}) [{d['kind']}]" for p, _, d in G.in_edges(n, data=True)]
+        ps = [f"{p} ({', '.join(d['features'])}) [{d['component'] or d['kind']}]"
+              for p, _, d in G.in_edges(n, data=True)]
         print(f"  {n:22s} <- {', '.join(ps) or '-'}")
         for name, expr in G.nodes[n].get("interactions", {}).items():
             print(f"  {'':22s}    + {name} = {expr}")
