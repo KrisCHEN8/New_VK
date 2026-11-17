@@ -1,0 +1,20 @@
+parent	child	features	kind	component
+outdoor_temperature	VS02_supply	outdoor_temperature	control	
+outdoor_temperature	AHU_supply_temperature	outdoor_temperature	control	
+outdoor_temperature	indoor_temperature	outdoor_temperature_ma6	physical	
+VS02_supply	indoor_temperature	VS02_supply_lag1, VS02_supply_lag2	physical	radiator
+relative_humidity	KB02_supply	relative_humidity_lag1	control	
+KB02_supply	indoor_temperature	KB02_supply_lag1	physical	chilled_beam
+AHU_supply_temperature	indoor_temperature	AHU_supply_temperature_lag1	physical	chilled_beam
+indoor_temperature	cooling_valve	indoor_temperature	control	
+indoor_temperature	heating_valve	indoor_temperature	control	
+indoor_temperature	VAV_damper	indoor_temperature	control	
+co2	VAV_damper	co2	control	
+co2	indoor_temperature	co2, co2_lag1	proxy	
+calendar	VAV_damper	hour_sin, hour_cos, workday	control	
+calendar	indoor_temperature	hour_sin, hour_cos, workday	proxy	
+solar_radiation	indoor_temperature	solar_radiation_ma4	physical	
+indoor_temperature(t-1)	indoor_temperature	indoor_temperature_lag1	physical	
+cooling_valve(t-1)	indoor_temperature	cooling_valve_lag1	physical	chilled_beam
+heating_valve(t-1, t-2)	indoor_temperature	heating_valve_lag1, heating_valve_lag2	physical	radiator
+VAV_damper(t-1)	indoor_temperature	VAV_damper_lag1	physical	chilled_beam

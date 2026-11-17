@@ -1,0 +1,255 @@
+@prefix gcm: <https://vk.org/gcm#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+gcm:AHU_supply_temperature__to__indoor_temperature a gcm:Edge ;
+    gcm:child gcm:indoor_temperature ;
+    gcm:component "chilled_beam" ;
+    gcm:feature "AHU_supply_temperature_lag1" ;
+    gcm:kind "physical" ;
+    gcm:parent gcm:AHU_supply_temperature .
+
+gcm:KB02_supply__to__indoor_temperature a gcm:Edge ;
+    gcm:child gcm:indoor_temperature ;
+    gcm:component "chilled_beam" ;
+    gcm:feature "KB02_supply_lag1" ;
+    gcm:kind "physical" ;
+    gcm:parent gcm:KB02_supply .
+
+gcm:Model a gcm:CausalModel ;
+    gcm:target gcm:indoor_temperature .
+
+gcm:VAV_damper_t_1___to__indoor_temperature a gcm:Edge ;
+    gcm:child gcm:indoor_temperature ;
+    gcm:component "chilled_beam" ;
+    gcm:feature "VAV_damper_lag1" ;
+    gcm:kind "physical" ;
+    gcm:parent gcm:VAV_damper_t_1 .
+
+gcm:VS02_supply__to__indoor_temperature a gcm:Edge ;
+    gcm:child gcm:indoor_temperature ;
+    gcm:component "radiator" ;
+    gcm:feature "VS02_supply_lag1",
+        "VS02_supply_lag2" ;
+    gcm:kind "physical" ;
+    gcm:parent gcm:VS02_supply .
+
+gcm:calendar__to__VAV_damper a gcm:Edge ;
+    gcm:child gcm:VAV_damper ;
+    gcm:feature "hour_cos",
+        "hour_sin",
+        "workday" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:calendar .
+
+gcm:calendar__to__indoor_temperature a gcm:Edge ;
+    gcm:child gcm:indoor_temperature ;
+    gcm:feature "hour_cos",
+        "hour_sin",
+        "workday" ;
+    gcm:kind "proxy" ;
+    gcm:parent gcm:calendar .
+
+gcm:co2__to__VAV_damper a gcm:Edge ;
+    gcm:child gcm:VAV_damper ;
+    gcm:feature "co2" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:co2 .
+
+gcm:co2__to__indoor_temperature a gcm:Edge ;
+    gcm:child gcm:indoor_temperature ;
+    gcm:feature "co2",
+        "co2_lag1" ;
+    gcm:kind "proxy" ;
+    gcm:parent gcm:co2 .
+
+gcm:cooling_valve_t_1___to__indoor_temperature a gcm:Edge ;
+    gcm:child gcm:indoor_temperature ;
+    gcm:component "chilled_beam" ;
+    gcm:feature "cooling_valve_lag1" ;
+    gcm:kind "physical" ;
+    gcm:parent gcm:cooling_valve_t_1 .
+
+gcm:heating_valve_t_1_t_2___to__indoor_temperature a gcm:Edge ;
+    gcm:child gcm:indoor_temperature ;
+    gcm:component "radiator" ;
+    gcm:feature "heating_valve_lag1",
+        "heating_valve_lag2" ;
+    gcm:kind "physical" ;
+    gcm:parent gcm:heating_valve_t_1_t_2 .
+
+gcm:indoor_temperature__to__VAV_damper a gcm:Edge ;
+    gcm:child gcm:VAV_damper ;
+    gcm:feature "indoor_temperature" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:indoor_temperature .
+
+gcm:indoor_temperature__to__cooling_valve a gcm:Edge ;
+    gcm:child gcm:cooling_valve ;
+    gcm:feature "indoor_temperature" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:indoor_temperature .
+
+gcm:indoor_temperature__to__heating_valve a gcm:Edge ;
+    gcm:child gcm:heating_valve ;
+    gcm:feature "indoor_temperature" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:indoor_temperature .
+
+gcm:indoor_temperature_t_1___to__indoor_temperature a gcm:Edge ;
+    gcm:child gcm:indoor_temperature ;
+    gcm:feature "indoor_temperature_lag1" ;
+    gcm:kind "physical" ;
+    gcm:parent gcm:indoor_temperature_t_1 .
+
+gcm:outdoor_temperature__to__AHU_supply_temperature a gcm:Edge ;
+    gcm:child gcm:AHU_supply_temperature ;
+    gcm:feature "outdoor_temperature" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:outdoor_temperature .
+
+gcm:outdoor_temperature__to__VS02_supply a gcm:Edge ;
+    gcm:child gcm:VS02_supply ;
+    gcm:feature "outdoor_temperature" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:outdoor_temperature .
+
+gcm:outdoor_temperature__to__indoor_temperature a gcm:Edge ;
+    gcm:child gcm:indoor_temperature ;
+    gcm:feature "outdoor_temperature_ma6" ;
+    gcm:kind "physical" ;
+    gcm:parent gcm:outdoor_temperature .
+
+gcm:relative_humidity__to__KB02_supply a gcm:Edge ;
+    gcm:child gcm:KB02_supply ;
+    gcm:feature "relative_humidity_lag1" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:relative_humidity .
+
+gcm:solar_radiation__to__indoor_temperature a gcm:Edge ;
+    gcm:child gcm:indoor_temperature ;
+    gcm:feature "solar_radiation_ma4" ;
+    gcm:kind "physical" ;
+    gcm:parent gcm:solar_radiation .
+
+gcm:VAV_damper_t_1 a gcm:LagNode ;
+    rdfs:label "VAV_damper(t-1)" ;
+    gcm:causes gcm:indoor_temperature ;
+    gcm:isRoot true ;
+    gcm:lagOf gcm:VAV_damper ;
+    gcm:layer 3 .
+
+gcm:cooling_valve_t_1 a gcm:LagNode ;
+    rdfs:label "cooling_valve(t-1)" ;
+    gcm:causes gcm:indoor_temperature ;
+    gcm:isRoot true ;
+    gcm:lagOf gcm:cooling_valve ;
+    gcm:layer 3 .
+
+gcm:heating_valve_t_1_t_2 a gcm:LagNode ;
+    rdfs:label "heating_valve(t-1, t-2)" ;
+    gcm:causes gcm:indoor_temperature ;
+    gcm:isRoot true ;
+    gcm:lagOf gcm:heating_valve ;
+    gcm:layer 3 .
+
+gcm:indoor_temperature__chilled_beam_air a gcm:Interaction ;
+    rdfs:label "chilled_beam_air" ;
+    gcm:expression "VAV_damper_lag1 * (indoor_temperature_lag1 - AHU_supply_temperature_lag1)" ;
+    gcm:monotone -1 .
+
+gcm:indoor_temperature__chilled_beam_water a gcm:Interaction ;
+    rdfs:label "chilled_beam_water" ;
+    gcm:expression "cooling_valve_lag1 * VAV_damper_lag1 * (indoor_temperature_lag1 - KB02_supply_lag1)" ;
+    gcm:monotone -1 .
+
+gcm:indoor_temperature__radiator_drive a gcm:Interaction ;
+    rdfs:label "radiator_drive" ;
+    gcm:expression "(heating_valve_lag1 + heating_valve_lag2) / 2 * ((VS02_supply_lag1 + VS02_supply_lag2) / 2 - indoor_temperature_lag1)" ;
+    gcm:monotone 1 .
+
+gcm:indoor_temperature_t_1 a gcm:LagNode ;
+    rdfs:label "indoor_temperature(t-1)" ;
+    gcm:causes gcm:indoor_temperature ;
+    gcm:isRoot true ;
+    gcm:lagOf gcm:indoor_temperature ;
+    gcm:layer 2 .
+
+gcm:relative_humidity a gcm:Variable ;
+    rdfs:label "relative_humidity" ;
+    gcm:causes gcm:KB02_supply ;
+    gcm:isRoot true ;
+    gcm:layer 0 .
+
+gcm:solar_radiation a gcm:Variable ;
+    rdfs:label "solar_radiation" ;
+    gcm:causes gcm:indoor_temperature ;
+    gcm:isRoot true ;
+    gcm:layer 0 .
+
+gcm:calendar a gcm:Variable ;
+    rdfs:label "calendar" ;
+    gcm:causes gcm:VAV_damper,
+        gcm:indoor_temperature ;
+    gcm:isRoot true ;
+    gcm:layer 0 .
+
+gcm:co2 a gcm:Variable ;
+    rdfs:label "co2" ;
+    gcm:causes gcm:VAV_damper,
+        gcm:indoor_temperature ;
+    gcm:isRoot true ;
+    gcm:layer 0 .
+
+gcm:AHU_supply_temperature a gcm:Variable ;
+    rdfs:label "AHU_supply_temperature" ;
+    gcm:causes gcm:indoor_temperature ;
+    gcm:isRoot false ;
+    gcm:layer 1 .
+
+gcm:KB02_supply a gcm:Variable ;
+    rdfs:label "KB02_supply" ;
+    gcm:causes gcm:indoor_temperature ;
+    gcm:isRoot false ;
+    gcm:layer 1 .
+
+gcm:VS02_supply a gcm:Variable ;
+    rdfs:label "VS02_supply" ;
+    gcm:causes gcm:indoor_temperature ;
+    gcm:isRoot false ;
+    gcm:layer 1 .
+
+gcm:cooling_valve a gcm:Variable ;
+    rdfs:label "cooling_valve" ;
+    gcm:isRoot false ;
+    gcm:layer 3 .
+
+gcm:heating_valve a gcm:Variable ;
+    rdfs:label "heating_valve" ;
+    gcm:isRoot false ;
+    gcm:layer 3 .
+
+gcm:outdoor_temperature a gcm:Variable ;
+    rdfs:label "outdoor_temperature" ;
+    gcm:causes gcm:AHU_supply_temperature,
+        gcm:VS02_supply,
+        gcm:indoor_temperature ;
+    gcm:isRoot true ;
+    gcm:layer 0 .
+
+gcm:VAV_damper a gcm:Variable ;
+    rdfs:label "VAV_damper" ;
+    gcm:isRoot false ;
+    gcm:layer 3 .
+
+gcm:indoor_temperature a gcm:Variable ;
+    rdfs:label "indoor_temperature" ;
+    gcm:causes gcm:VAV_damper,
+        gcm:cooling_valve,
+        gcm:heating_valve ;
+    gcm:hasInteraction gcm:indoor_temperature__chilled_beam_air,
+        gcm:indoor_temperature__chilled_beam_water,
+        gcm:indoor_temperature__radiator_drive ;
+    gcm:isRoot false ;
+    gcm:layer 2 .
+

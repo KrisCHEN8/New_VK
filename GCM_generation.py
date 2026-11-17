@@ -1,12 +1,12 @@
 from pathlib import Path
 import re
-
 import numpy as np
 import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import holidays
+import rdflib
 
 
 T = "indoor_temperature"
@@ -18,7 +18,7 @@ EDGES = [
     # set-point curves
     ("outdoor_temperature", "VS02_supply", ["outdoor_temperature"]),     # VS02 heating curve
     ("relative_humidity", "KB02_supply", ["relative_humidity_lag1"]),       # chilled water setpoint to avoid condensation
-    ("outdoor_temperature", "AHU_supply_temperature", ["outdoor_temperature"]),  # AHU setpoint curve
+    ("outdoor_temperature", "AHU_supply_temperature", ["outdoor_temperature"]),     # AHU setpoint curve
 
     # room controllers react to the room with rather fast response
     (T, "cooling_valve", [T]),
@@ -44,30 +44,29 @@ EDGES = [
     ("VAV_damper", T, ["VAV_damper_lag1"]),
     ("AHU_supply_temperature", T, ["AHU_supply_temperature_lag1"]),
     ("solar_radiation", T, ["solar_radiation_ma4"]),                        # 2-hour moving average, 4 * 30 min
-    ("outdoor_temperature", T, ["outdoor_temperature_ma6"]),                # 3-hour moving average, 6 * 30 min
+    ("outdoor_temperature", T, ["outdoor_temperature_ma6"]),           # 3-hour moving average, 6 * 30 min
 
     # proxies for unmeasured drivers of the room temperature
-    ("co2", T, ["co2", "co2_lag1"]),                                        # occupants
-    (CAL, T, CAL_FEATURES),                                                 # scheduled internal gains
+    ("co2", T, ["co2", "co2_lag1"]),      # occupants
+    (CAL, T, CAL_FEATURES),         # scheduled internal gains
 ]
 
 
 # Components: the variables that act on the room together through one emitter.
-# Their edges into the room are cut together when the strength of the component is quantified.
 COMPONENTS = {
     "chilled_beam": ["cooling_valve", "KB02_supply", "VAV_damper", "AHU_supply_temperature"],
     "radiator": ["heating_valve", "VS02_supply"],
 }
 
-# Emitters' joint effects, per component
+# Emitters' joint effects
 INTERACTIONS = {
     T: {
-        # chilled beam, air side: heat removed by the primary air
+        # chilled beam, air side
         "chilled_beam_air": "VAV_damper_lag1 * (indoor_temperature_lag1 - AHU_supply_temperature_lag1)",
-        # chilled beam, water side: heat removed by the coil; its capacity grows with the primary air flow
+        # chilled beam, water side
         "chilled_beam_water": ("cooling_valve_lag1 * VAV_damper_lag1"
                                " * (indoor_temperature_lag1 - KB02_supply_lag1)"),
-        # radiator: heat supplied
+        # radiator
         "radiator_drive": ("(heating_valve_lag1 + heating_valve_lag2) / 2"
                            " * ((VS02_supply_lag1 + VS02_supply_lag2) / 2 - indoor_temperature_lag1)"),
     },
@@ -104,9 +103,9 @@ CONFIG = {
     "calendar_features": CAL_FEATURES,
     "display_names": {CAL: "calendar\n(hour, workday)"},
     "freq": "30min",
-    "country": "SE",                      # public holidays for 'workday'
+    "country": "SE",  # Filter out the Swedish red days
     "regime_valves": {"heating": "heating_valve", "cooling": "cooling_valve"},
-    # "valve_active_threshold": 5.0,        # daily mean opening above which an emitter counts as active (% open; use 0.05 for 0-1 signals)
+    "valve_active_threshold": 5.0,   # daily mean opening above which an emitter counts as active (% open)
     "figure_name": "causal_dag.png",
     "make_plots": True,
 }
@@ -405,15 +404,108 @@ def plot_dag(G):
         handles.append(Line2D([], [], color="#1f3b73", marker="s", ls="", ms=10, mfc="white", mew=0.8,
                               label="lag node: earlier values of the node above it"))
     ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.06), ncol=5, fontsize=8,
-              frameon=False, title="edge label: lags / moving average of the parent (none = same interval)",
+              frameon=False, # title="edge label: lags / moving average of the parent (none = same interval)",
               title_fontsize=8)
     ax.set_title("Graphical Causal Model (30-min data)", loc="left")
     return fig
 
 
+# export as .ttl and .txt files
+GCM_NS = "https://vk.org/gcm#"
+
+def _flat(attrs):
+    """Node/edge attributes as plain strings and numbers (lists and dicts joined), for text formats."""
+    out = {}
+    for k, v in attrs.items():
+        if isinstance(v, dict):
+            v = "; ".join(f"{a}={b}" for a, b in v.items())
+        elif isinstance(v, (list, tuple)):
+            v = ", ".join(map(str, v))
+        out[k] = "" if v is None else v if isinstance(v, (int, float, str)) else str(v)
+    return out
+
+
+def _to_rdf(G, ns=GCM_NS):
+    """
+    The DAG as an RDF graph. Each variable is a gcm:Variable (gcm:LagNode for lag nodes, with gcm:lagOf),
+    each edge a direct triple 'parent gcm:causes child' plus a gcm:Edge resource holding its features,
+    kind and component. Interaction terms are gcm:Interaction resources of their node.
+    """
+    from rdflib import Graph, Literal, Namespace, RDF, RDFS, URIRef
+    GCM = Namespace(ns)
+    uri = lambda name: URIRef(ns + re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_"))
+    g = Graph()
+    g.bind("gcm", GCM)
+
+    g.add((GCM.Model, RDF.type, GCM.CausalModel))
+    g.add((GCM.Model, GCM.target, uri(G.graph["target"])))
+    for n, d in G.nodes(data=True):
+        u = uri(n)
+        g.add((u, RDF.type, GCM.LagNode if "lag_of" in d else GCM.Variable))
+        g.add((u, RDFS.label, Literal(n)))
+        g.add((u, GCM.isRoot, Literal(G.in_degree(n) == 0)))
+        g.add((u, GCM.layer, Literal(d.get("layer", 0))))
+        if "lag_of" in d:
+            g.add((u, GCM.lagOf, uri(d["lag_of"])))
+        for name, expr in d.get("interactions", {}).items():
+            i = uri(f"{n}__{name}")
+            g.add((i, RDF.type, GCM.Interaction))
+            g.add((i, RDFS.label, Literal(name)))
+            g.add((i, GCM.expression, Literal(expr)))
+            g.add((i, GCM.monotone, Literal(d.get("monotone", {}).get(name, 0))))
+            g.add((u, GCM.hasInteraction, i))
+    for p, c, d in G.edges(data=True):
+        g.add((uri(p), GCM.causes, uri(c)))
+        e = uri(f"{p}__to__{c}")
+        g.add((e, RDF.type, GCM.Edge))
+        g.add((e, GCM.parent, uri(p)))
+        g.add((e, GCM.child, uri(c)))
+        g.add((e, GCM.kind, Literal(d["kind"])))
+        if d.get("component"):
+            g.add((e, GCM.component, Literal(d["component"])))
+        for f in d["features"]:
+            g.add((e, GCM.feature, Literal(f)))
+    return g
+
+
+def export_dag(G, path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ext = path.suffix.lower()
+    if ext in {".ttl", ".rdf", ".nt"}:
+        fmt = {".ttl": "turtle", ".rdf": "xml", ".nt": "nt"}[ext]
+        _to_rdf(G).serialize(destination=path, format=fmt)
+    elif ext in {".txt", ".csv"}:
+        rows = [{"parent": p, "child": c, **_flat({k: d.get(k) for k in ("features", "kind", "component")})}
+                for p, c, d in G.edges(data=True)]
+        pd.DataFrame(rows).to_csv(path, sep="\t" if ext == ".txt" else ",", index=False)
+    elif ext == ".dot":
+        q = lambda s: '"' + str(s).replace('"', r'\"').replace("\n", r"\n") + '"'
+        lines = ["digraph GCM {", "  rankdir=LR;"]
+        for n, d in G.nodes(data=True):
+            style = "dashed" if "lag_of" in d else "solid"
+            lines.append(f"  {q(n)} [label={q(d.get('label', n))}, style={style}];")
+        for p, c, d in G.edges(data=True):
+            lines.append(f"  {q(p)} -> {q(c)} [label={q(', '.join(d['features']))}, kind={q(d['kind'])}];")
+        path.write_text("\n".join(lines + ["}"]) + "\n")
+    elif ext in {".graphml", ".gml", ".json"}:
+        H = nx.DiGraph(**_flat(G.graph))
+        H.add_nodes_from((n, _flat(d)) for n, d in G.nodes(data=True))
+        H.add_edges_from((p, c, _flat(d)) for p, c, d in G.edges(data=True))
+        if ext == ".json":
+            import json
+            path.write_text(json.dumps(nx.node_link_data(H, edges="edges"), indent=2))
+        else:
+            (nx.write_graphml if ext == ".graphml" else nx.write_gml)(H, path)
+    else:
+        raise ValueError(f"unknown extension '{ext}'")
+    print(f"DAG -> {path}")
+    return path
+
+
 # main workflow
 def run_gcm(config=None):
-    """Build the causal DAG, print it and save the figure. Returns the networkx DiGraph."""
+    """Build the causal DAG, print it and save the figure."""
     cfg = _merge_config(config)
     G = build_gcm(cfg)
     lag_of = nx.get_node_attributes(G, "lag_of")
@@ -440,3 +532,5 @@ def run_gcm(config=None):
 
 if __name__ == "__main__":
     G = run_gcm()
+    export_dag(G, "07-D2-02_data/causal_dag.ttl")
+    export_dag(G, "07-D2-02_data/causal_dag.txt")
