@@ -13,41 +13,59 @@ T = "indoor_temperature"
 CAL = "calendar"
 CAL_FEATURES = ["hour_sin", "hour_cos", "workday"]
 
+CONTROLLERS = ["cooling_valve", "heating_valve", "VAV_damper"]
+ERR_WINDOWS = [2, 4, 8, 16]                                             # 1, 2, 4 and 8 hours
+ROOM_NOW = [T] + [f"{T}_ma{w}" for w in ERR_WINDOWS]                    # room now, and its recent means
+SETPOINT_NOW = ["setpoint"] + [f"setpoint_ma{w}" for w in ERR_WINDOWS]
+SEASON = ["outdoor_temperature_ma48"]                                   # 24-hour mean outdoor temperature
+
 # parent, child, feature column names
 EDGES = [
     # set-point curves
-    ("outdoor_temperature", "VS02_supply", ["outdoor_temperature"]),     # VS02 heating curve
+    ("outdoor_temperature", "VS02_supply", ["outdoor_temperature"] + SEASON),     # VS02 heating curve
+    (CAL, "VS02_supply", CAL_FEATURES),                                             # night setback
+    ("outdoor_temperature", "AHU_supply_temperature", ["outdoor_temperature"] + SEASON),     # AHU setpoint curve
+    (CAL, "AHU_supply_temperature", CAL_FEATURES),
+    ("VAV_damper", "AHU_supply_temperature", ["VAV_damper"]),       # sensor in the room's duct drifts at low air flow
     ("relative_humidity", "KB02_supply", ["relative_humidity_lag1"]),       # chilled water setpoint to avoid condensation
-    ("outdoor_temperature", "AHU_supply_temperature", ["outdoor_temperature"]),     # AHU setpoint curve
+    ("outdoor_temperature", "KB02_supply", ["outdoor_temperature"] + SEASON),
+    (CAL, "KB02_supply", CAL_FEATURES),
+    ("cooling_valve", "KB02_supply", ["cooling_valve", "cooling_valve_ma4", "cooling_valve_ma16"]),  # closed valve: stagnant water warms at the sensor
 
-    # room controllers react to the room with rather fast response
-    (T, "cooling_valve", [T]),
-    (T, "heating_valve", [T]),
-    (T, "VAV_damper", [T]),
-    ("co2", "VAV_damper", ["co2"]),    # demand-controlled ventilation
-    # (CAL, "cooling_valve", CAL_FEATURES),     # schedules, night setback
-    # (CAL, "heating_valve", CAL_FEATURES),
+    # room controllers react within the interval to the error against the scheduled setpoint,
+    # with memory (errors averaged over 1-8 hours), and change with schedule and season
+    (T, "cooling_valve", ROOM_NOW),
+    ("setpoint", "cooling_valve", SETPOINT_NOW),
+    (CAL, "cooling_valve", CAL_FEATURES),
+    ("outdoor_temperature", "cooling_valve", SEASON),
+    ("relative_humidity", "cooling_valve", ["relative_humidity"]),   # condensation limit
+    (T, "heating_valve", ROOM_NOW),
+    ("setpoint", "heating_valve", SETPOINT_NOW),
+    (CAL, "heating_valve", CAL_FEATURES),
+    ("outdoor_temperature", "heating_valve", SEASON),
+    (T, "VAV_damper", ROOM_NOW),
+    ("setpoint", "VAV_damper", SETPOINT_NOW),
     (CAL, "VAV_damper", CAL_FEATURES),
-    # ("setpoint", "cooling_valve", ["setpoint"]),        # the setpoint of roo temeprature
-    # ("setpoint", "heating_valve", ["setpoint"]),
+    ("outdoor_temperature", "VAV_damper", SEASON),
+    ("co2", "VAV_damper", ["co2"]),    # demand-controlled ventilation
 
     # # hydraulics, same interval
     # ("cooling_valve", "cooling_flow", ["cooling_valve"]),
     # ("heating_valve", "heating_flow", ["heating_valve"]),
 
-    # physical effects on the room (delayed)
-    (T, T, [f"{T}_lag1"]),                                          # thermal inertia
+    # physical effects on the room (delayed: every cause is at t-1 or earlier)
+    (T, T, [f"{T}_lag1"]),                                          # thermal inertia, exchange with the building mass
     ("cooling_valve", T, ["cooling_valve_lag1"]),                           # chilled beam, faster
     ("KB02_supply", T, ["KB02_supply_lag1"]),
     ("heating_valve", T, ["heating_valve_lag1", "heating_valve_lag2"]),     # radiator, slower
     ("VS02_supply", T, ["VS02_supply_lag1", "VS02_supply_lag2"]),
     ("VAV_damper", T, ["VAV_damper_lag1"]),
     ("AHU_supply_temperature", T, ["AHU_supply_temperature_lag1"]),
-    ("solar_radiation", T, ["solar_radiation_ma4"]),                        # 2-hour moving average, 4 * 30 min
-    ("outdoor_temperature", T, ["outdoor_temperature_ma6"]),           # 3-hour moving average, 6 * 30 min
+    ("solar_radiation", T, ["solar_radiation_lag1", "solar_radiation_ma4_lag1"]),   # last 30 min, and 2-hour mean up to t-1
+    ("outdoor_temperature", T, ["outdoor_temperature_ma6_lag1"]),           # 3-hour mean up to t-1
 
     # proxies for unmeasured drivers of the room temperature
-    ("co2", T, ["co2", "co2_lag1"]),      # occupants
+    ("co2", T, ["co2_lag1"]),      # occupants
     (CAL, T, CAL_FEATURES),         # scheduled internal gains
 ]
 
@@ -58,25 +76,46 @@ COMPONENTS = {
     "radiator": ["heating_valve", "VS02_supply"],
 }
 
-# Emitters' joint effects
+# Derived terms, computed from the feature columns
+ERR_TERMS = {f"err_{w // 2}h": f"{T}_ma{w} - setpoint_ma{w}" for w in ERR_WINDOWS}   # room minus setpoint
 INTERACTIONS = {
     T: {
-        # chilled beam, air side
-        "chilled_beam_air": "VAV_damper_lag1 * (indoor_temperature_lag1 - AHU_supply_temperature_lag1)",
-        # chilled beam, water side
-        "chilled_beam_water": ("cooling_valve_lag1 * VAV_damper_lag1"
-                               " * (indoor_temperature_lag1 - KB02_supply_lag1)"),
-        # radiator
-        "radiator_drive": ("(heating_valve_lag1 + heating_valve_lag2) / 2"
-                           " * ((VS02_supply_lag1 + VS02_supply_lag2) / 2 - indoor_temperature_lag1)"),
+        # temperature differences that drive the heat flows
+        "dT_envelope": "outdoor_temperature_ma6_lag1 - indoor_temperature_lag1",
+        "dT_chilled_water": "indoor_temperature_lag1 - KB02_supply_lag1",           # chilled beam, water side
+        "dT_supply_air": "indoor_temperature_lag1 - AHU_supply_temperature_lag1",   # chilled beam, air side
+        "dT_radiator": "(VS02_supply_lag1 + VS02_supply_lag2) / 2 - indoor_temperature_lag1",
+        "heating_valve_1h": "(heating_valve_lag1 + heating_valve_lag2) / 2",
+    },
+    **{c: ERR_TERMS for c in CONTROLLERS},
+}
+
+# Feature columns that enter the mechanism only through its derived terms
+INTERACTION_INPUTS = {
+    T: ["outdoor_temperature_ma6_lag1", "KB02_supply_lag1", "AHU_supply_temperature_lag1",
+        "heating_valve_lag1", "heating_valve_lag2", "VS02_supply_lag1", "VS02_supply_lag2"],
+    **{c: ROOM_NOW[1:] + SETPOINT_NOW[1:] for c in CONTROLLERS},
+}
+
+GROUPS = {
+    T: {
+        "envelope": ["dT_envelope"],
+        "solar": ["solar_radiation_lag1", "solar_radiation_ma4_lag1"],
+        "occupancy": ["co2_lag1"],
+        "schedule": CAL_FEATURES,
+        "chilled_beam": ["cooling_valve_lag1", "dT_chilled_water", "VAV_damper_lag1", "dT_supply_air", *CAL_FEATURES],
+        "radiator": ["heating_valve_1h", "dT_radiator"],
+        "building_mass": [f"{T}_lag1", *CAL_FEATURES],
     },
 }
 
 # Monotonic effects
 MONOTONE = {
     T: {
-        "solar_radiation_ma4": +1, "outdoor_temperature_ma6": +1,
-        "chilled_beam_air": -1, "chilled_beam_water": -1, "radiator_drive": +1,
+        "dT_envelope": +1, "solar_radiation_lag1": +1, "solar_radiation_ma4_lag1": +1, "co2_lag1": +1,
+        "cooling_valve_lag1": -1, "dT_chilled_water": -1, "dT_supply_air": -1,
+        "heating_valve_1h": +1, "dT_radiator": +1,
+        f"{T}_lag1": -1,      # the target is the change: a warmer room loses more heat to the building
     },
     "cooling_valve": {T: +1},
     "heating_valve": {T: -1},
@@ -95,9 +134,13 @@ CONFIG = {
     "edges": EDGES,
     "components": COMPONENTS,
     "interactions": INTERACTIONS,
+    "interaction_inputs": INTERACTION_INPUTS,
+    "groups": GROUPS,
     "monotone": MONOTONE,
     "excluded": EXCLUDED,
-    "lag_node_sources": [T, "cooling_valve", "heating_valve", "VAV_damper"],   # variables in a loop with the target
+    "delta_nodes": [T],                   # mechanisms that predict the change over one interval
+    "lag_node_sources": [T, "cooling_valve", "heating_valve", "VAV_damper",
+                         "KB02_supply", "AHU_supply_temperature"],   # variables in a loop with the target
     "proxy_nodes": ["co2", CAL],          # edges from these into the target stand for unmeasured drivers
     "calendar_node": CAL,
     "calendar_features": CAL_FEATURES,
@@ -117,19 +160,26 @@ def _merge_config(config=None):
     return {**CONFIG, **(config or {})}
 
 
+def _window(var, feat):
+    """(w, k) of the feature column 'feat' of 'var': the mean of w values, the latest k intervals ago."""
+    if feat == var:
+        return 1, 0
+    m = re.fullmatch(rf"{re.escape(var)}_(?:lag(\d+)|ma(\d+)(?:_lag(\d+))?)", feat)
+    if not m:
+        raise ValueError(f"feature '{feat}' of '{var}' must be '{var}', '{var}_lag<k>', '{var}_ma<w>' "
+                         f"or '{var}_ma<w>_lag<k>'")
+    lag, w, k = m.groups()
+    return (1, int(lag)) if lag else (int(w), int(k or 0))
+
+
 def _feature_lags(var, feat, cfg):
     """Time lags (in intervals) that the feature column 'feat' of the variable 'var' covers."""
     if var == cfg["calendar_node"]:
         if feat not in cfg["calendar_features"]:
             raise ValueError(f"calendar feature '{feat}' is not in calendar_features")
         return [0]
-    if feat == var:
-        return [0]
-    m = re.fullmatch(rf"{re.escape(var)}_(lag|ma)(\d+)", feat)
-    if not m:
-        raise ValueError(f"feature '{feat}' of '{var}' must be '{var}', '{var}_lag<k>' or '{var}_ma<w>'")
-    k = int(m.group(2))
-    return [k] if m.group(1) == "lag" else list(range(k))
+    w, k = _window(var, feat)
+    return list(range(k, k + w))
 
 
 def _lag_node_name(var, lags):
@@ -195,15 +245,31 @@ def build_gcm(config=None):
             continue
         inputs = mechanism_inputs(G, n)
         inter = dict(cfg["interactions"].get(n, {}))
+        used = set()
         for name, expr in inter.items():
-            missing = set(re.findall(r"[A-Za-z_]\w*", expr)) - set(inputs)
+            names = set(re.findall(r"[A-Za-z_]\w*", expr))
+            missing = names - set(inputs)
             if missing:
                 raise ValueError(f"interaction '{name}' of {n} uses {sorted(missing)}, which are not inputs of {n}")
+            used |= names
+        hidden = list(cfg["interaction_inputs"].get(n, []))
+        unused = set(hidden) - used
+        if unused:
+            raise ValueError(f"interaction_inputs of {n} list {sorted(unused)}, which no interaction of {n} uses")
+        columns = [c for c in inputs if c not in hidden] + list(inter)
         mono = dict(cfg["monotone"].get(n, {}))
-        unknown = set(mono) - set(inputs) - set(inter)
+        unknown = set(mono) - set(columns)
         if unknown:
             raise ValueError(f"monotone constraint on {sorted(unknown)}, which are not columns of {n}'s mechanism")
-        G.nodes[n].update(interactions=inter, monotone=mono)
+        groups = {g: list(cols) for g, cols in cfg["groups"].get(n, {}).items()}
+        grouped = {c for cols in groups.values() for c in cols}
+        if groups and grouped != set(columns):
+            raise ValueError(f"groups of {n}: unknown columns {sorted(grouped - set(columns))}, "
+                             f"ungrouped columns {sorted(set(columns) - grouped)}")
+        delta = n in cfg["delta_nodes"]
+        if delta and f"{n}_lag1" not in inputs:
+            raise ValueError(f"{n} predicts its change, so '{n}_lag1' must be one of its inputs")
+        G.nodes[n].update(interactions=inter, interaction_inputs=hidden, monotone=mono, groups=groups, delta=delta)
     return G
 
 
@@ -229,12 +295,13 @@ def edge_bundles(G, node, by_component=True):
 
 def design_matrix(G, node, inputs):
     """
-    Mechanism inputs plus the node's interaction terms, computed from 'inputs'
+    Mechanism inputs plus the node's interaction terms, computed from 'inputs'; the columns that
+    enter only through the interaction terms are dropped.
     """
     X = inputs[mechanism_inputs(G, node)].copy()
     for name, expr in G.nodes[node]["interactions"].items():
         X[name] = X.eval(expr)
-    return X
+    return X.drop(columns=G.nodes[node]["interaction_inputs"])
 
 
 def monotone_constraints(G, node, columns):
@@ -242,11 +309,24 @@ def monotone_constraints(G, node, columns):
     return [G.nodes[node]["monotone"].get(c, 0) for c in columns]
 
 
+def interaction_groups(G, node, columns):
+    """Index sets of the design-matrix columns per additive group (interaction_cst); None if the node has none."""
+    groups = G.nodes[node]["groups"]
+    if not groups:
+        return None
+    idx = {c: i for i, c in enumerate(columns)}
+    return [[idx[c] for c in cols] for cols in groups.values()]
+
+
 def node_frame(G, node, feats):
-    """Rows with complete data for one mechanism: target series y and design matrix X."""
+    """
+    Rows with complete data for one mechanism: target series y and design matrix X.
+    For delta nodes y is the change over one interval, x_t - x_{t-1}.
+    """
     cols = list(dict.fromkeys([node] + mechanism_inputs(G, node)))
     data = feats[cols].dropna()
-    return data[node], design_matrix(G, node, data)
+    y = data[node] - data[f"{node}_lag1"] if G.nodes[node]["delta"] else data[node]
+    return y, design_matrix(G, node, data)
 
 
 # data
@@ -268,9 +348,9 @@ def make_features(df, G, config=None):
         for f in feats:
             if f in out or var == cfg["calendar_node"]:
                 continue
-            kind, k = re.fullmatch(rf"{re.escape(var)}_(lag|ma)(\d+)", f).groups()
-            k = int(k)
-            out[f] = df[var].shift(k) if kind == "lag" else df[var].rolling(k, min_periods=k).mean()
+            w, k = _window(var, f)
+            s = df[var] if w == 1 else df[var].rolling(w, min_periods=w).mean()
+            out[f] = s.shift(k)
 
     if cfg["calendar_node"] in G:
         idx = df.index
@@ -324,7 +404,7 @@ def _curve(ax, p_u, p_v, rad, t):
     return ax.transData.inverted().transform((1 - t) ** 2 * p0 + 2 * t * (1 - t) * ctrl + t ** 2 * p2)
 
 
-def _pick_rad(ax, pos, u, v, candidates=(0.0, 0.15, -0.15, 0.3, -0.3)):
+def _pick_rad(ax, pos, u, v, candidates=(0.0, 0.1, -0.1, 0.2, -0.2)):
     """Curvature from 'candidates' that keeps the edge u to v furthest from the nodes of the layers it skips."""
     lo, hi = sorted((pos[u][0], pos[v][0]))
     between = [(x, y) for n, (x, y) in pos.items() if lo < x < hi]
@@ -355,7 +435,11 @@ def _edge_label(G, parent, features):
     name = G.nodes[parent].get("lag_of", parent)
     if parent != name or features == [name] or name == CONFIG["calendar_node"]:
         return None   # edge from a lag node, same-interval edge, or calendar inputs
-    return ", ".join("lag0" if f == name else f.removeprefix(name + "_") for f in features)
+    parts = ["lag0" if f == name else f.removeprefix(name + "_") for f in features]
+    mas = [q for q in parts if re.fullmatch(r"ma\d+", q)]
+    if len(mas) > 1:   # several windows ending now: 'ma2/4/8/16'
+        parts = [q for q in parts if q not in mas] + ["ma" + "/".join(q[2:] for q in mas)]
+    return ", ".join(parts)
 
 
 EDGE_STYLE = {"physical": "-", "control": "--", "proxy": ":"}
@@ -369,10 +453,10 @@ def plot_dag(G):
     tgt = G.graph["target"]
     lag_of = nx.get_node_attributes(G, "lag_of")
     pos = _layout(G)
-    fig, ax = plt.subplots(figsize=(14, 8.5), layout="constrained")
+    fig, ax = plt.subplots(figsize=(16, 10), layout="constrained")
     xs, ys = zip(*pos.values())
     ax.set_xlim(min(xs) - 0.35, max(xs) + 0.35)
-    ax.set_ylim(min(ys) - 1.1, max(ys) + 0.6)   # room below for the legend
+    ax.set_ylim(min(ys) - 1.3, max(ys) + 1.3)   # room for the arcs, and the legend below
     ax.axis("off")
 
     # nodes: roots, mechanisms, target, lag nodes
@@ -429,7 +513,8 @@ def _to_rdf(G, ns=GCM_NS):
     """
     The DAG as an RDF graph. Each variable is a gcm:Variable (gcm:LagNode for lag nodes, with gcm:lagOf),
     each edge a direct triple 'parent gcm:causes child' plus a gcm:Edge resource holding its features,
-    kind and component. Interaction terms are gcm:Interaction resources of their node.
+    kind and component. Interaction terms are gcm:Interaction resources of their node, additive groups
+    gcm:AdditiveGroup resources; a node that predicts its change has gcm:deltaTarget true.
     """
     from rdflib import Graph, Literal, Namespace, RDF, RDFS, URIRef
     GCM = Namespace(ns)
@@ -454,6 +539,15 @@ def _to_rdf(G, ns=GCM_NS):
             g.add((i, GCM.expression, Literal(expr)))
             g.add((i, GCM.monotone, Literal(d.get("monotone", {}).get(name, 0))))
             g.add((u, GCM.hasInteraction, i))
+        for name, cols in d.get("groups", {}).items():
+            a = uri(f"{n}__group__{name}")
+            g.add((a, RDF.type, GCM.AdditiveGroup))
+            g.add((a, RDFS.label, Literal(name)))
+            for c in cols:
+                g.add((a, GCM.column, Literal(c)))
+            g.add((u, GCM.hasGroup, a))
+        if d.get("delta"):
+            g.add((u, GCM.deltaTarget, Literal(True)))
     for p, c, d in G.edges(data=True):
         g.add((uri(p), GCM.causes, uri(c)))
         e = uri(f"{p}__to__{c}")

@@ -1,20 +1,35 @@
 parent	child	features	kind	component
-outdoor_temperature	VS02_supply	outdoor_temperature	control	
-outdoor_temperature	AHU_supply_temperature	outdoor_temperature	control	
-outdoor_temperature	indoor_temperature	outdoor_temperature_ma6	physical	
+outdoor_temperature	VS02_supply	outdoor_temperature, outdoor_temperature_ma48	control	
+outdoor_temperature	AHU_supply_temperature	outdoor_temperature, outdoor_temperature_ma48	control	
+outdoor_temperature	KB02_supply	outdoor_temperature, outdoor_temperature_ma48	control	
+outdoor_temperature	cooling_valve	outdoor_temperature_ma48	control	
+outdoor_temperature	heating_valve	outdoor_temperature_ma48	control	
+outdoor_temperature	VAV_damper	outdoor_temperature_ma48	control	
+outdoor_temperature	indoor_temperature	outdoor_temperature_ma6_lag1	physical	
 VS02_supply	indoor_temperature	VS02_supply_lag1, VS02_supply_lag2	physical	radiator
-relative_humidity	KB02_supply	relative_humidity_lag1	control	
-KB02_supply	indoor_temperature	KB02_supply_lag1	physical	chilled_beam
-AHU_supply_temperature	indoor_temperature	AHU_supply_temperature_lag1	physical	chilled_beam
-indoor_temperature	cooling_valve	indoor_temperature	control	
-indoor_temperature	heating_valve	indoor_temperature	control	
-indoor_temperature	VAV_damper	indoor_temperature	control	
-co2	VAV_damper	co2	control	
-co2	indoor_temperature	co2, co2_lag1	proxy	
+calendar	VS02_supply	hour_sin, hour_cos, workday	control	
+calendar	AHU_supply_temperature	hour_sin, hour_cos, workday	control	
+calendar	KB02_supply	hour_sin, hour_cos, workday	control	
+calendar	cooling_valve	hour_sin, hour_cos, workday	control	
+calendar	heating_valve	hour_sin, hour_cos, workday	control	
 calendar	VAV_damper	hour_sin, hour_cos, workday	control	
 calendar	indoor_temperature	hour_sin, hour_cos, workday	proxy	
-solar_radiation	indoor_temperature	solar_radiation_ma4	physical	
+VAV_damper	AHU_supply_temperature	VAV_damper	control	chilled_beam
+relative_humidity	KB02_supply	relative_humidity_lag1	control	
+relative_humidity	cooling_valve	relative_humidity	control	
+cooling_valve	KB02_supply	cooling_valve, cooling_valve_ma4, cooling_valve_ma16	control	chilled_beam
+indoor_temperature	cooling_valve	indoor_temperature, indoor_temperature_ma2, indoor_temperature_ma4, indoor_temperature_ma8, indoor_temperature_ma16	control	
+indoor_temperature	heating_valve	indoor_temperature, indoor_temperature_ma2, indoor_temperature_ma4, indoor_temperature_ma8, indoor_temperature_ma16	control	
+indoor_temperature	VAV_damper	indoor_temperature, indoor_temperature_ma2, indoor_temperature_ma4, indoor_temperature_ma8, indoor_temperature_ma16	control	
+setpoint	cooling_valve	setpoint, setpoint_ma2, setpoint_ma4, setpoint_ma8, setpoint_ma16	control	
+setpoint	heating_valve	setpoint, setpoint_ma2, setpoint_ma4, setpoint_ma8, setpoint_ma16	control	
+setpoint	VAV_damper	setpoint, setpoint_ma2, setpoint_ma4, setpoint_ma8, setpoint_ma16	control	
+co2	VAV_damper	co2	control	
+co2	indoor_temperature	co2_lag1	proxy	
+solar_radiation	indoor_temperature	solar_radiation_lag1, solar_radiation_ma4_lag1	physical	
 indoor_temperature(t-1)	indoor_temperature	indoor_temperature_lag1	physical	
 cooling_valve(t-1)	indoor_temperature	cooling_valve_lag1	physical	chilled_beam
+KB02_supply(t-1)	indoor_temperature	KB02_supply_lag1	physical	chilled_beam
 heating_valve(t-1, t-2)	indoor_temperature	heating_valve_lag1, heating_valve_lag2	physical	radiator
 VAV_damper(t-1)	indoor_temperature	VAV_damper_lag1	physical	chilled_beam
+AHU_supply_temperature(t-1)	indoor_temperature	AHU_supply_temperature_lag1	physical	chilled_beam

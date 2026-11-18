@@ -2,22 +2,29 @@
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-gcm:AHU_supply_temperature__to__indoor_temperature a gcm:Edge ;
+gcm:AHU_supply_temperature_t_1___to__indoor_temperature a gcm:Edge ;
     gcm:child gcm:indoor_temperature ;
     gcm:component "chilled_beam" ;
     gcm:feature "AHU_supply_temperature_lag1" ;
     gcm:kind "physical" ;
-    gcm:parent gcm:AHU_supply_temperature .
+    gcm:parent gcm:AHU_supply_temperature_t_1 .
 
-gcm:KB02_supply__to__indoor_temperature a gcm:Edge ;
+gcm:KB02_supply_t_1___to__indoor_temperature a gcm:Edge ;
     gcm:child gcm:indoor_temperature ;
     gcm:component "chilled_beam" ;
     gcm:feature "KB02_supply_lag1" ;
     gcm:kind "physical" ;
-    gcm:parent gcm:KB02_supply .
+    gcm:parent gcm:KB02_supply_t_1 .
 
 gcm:Model a gcm:CausalModel ;
     gcm:target gcm:indoor_temperature .
+
+gcm:VAV_damper__to__AHU_supply_temperature a gcm:Edge ;
+    gcm:child gcm:AHU_supply_temperature ;
+    gcm:component "chilled_beam" ;
+    gcm:feature "VAV_damper" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:VAV_damper .
 
 gcm:VAV_damper_t_1___to__indoor_temperature a gcm:Edge ;
     gcm:child gcm:indoor_temperature ;
@@ -34,8 +41,48 @@ gcm:VS02_supply__to__indoor_temperature a gcm:Edge ;
     gcm:kind "physical" ;
     gcm:parent gcm:VS02_supply .
 
+gcm:calendar__to__AHU_supply_temperature a gcm:Edge ;
+    gcm:child gcm:AHU_supply_temperature ;
+    gcm:feature "hour_cos",
+        "hour_sin",
+        "workday" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:calendar .
+
+gcm:calendar__to__KB02_supply a gcm:Edge ;
+    gcm:child gcm:KB02_supply ;
+    gcm:feature "hour_cos",
+        "hour_sin",
+        "workday" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:calendar .
+
 gcm:calendar__to__VAV_damper a gcm:Edge ;
     gcm:child gcm:VAV_damper ;
+    gcm:feature "hour_cos",
+        "hour_sin",
+        "workday" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:calendar .
+
+gcm:calendar__to__VS02_supply a gcm:Edge ;
+    gcm:child gcm:VS02_supply ;
+    gcm:feature "hour_cos",
+        "hour_sin",
+        "workday" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:calendar .
+
+gcm:calendar__to__cooling_valve a gcm:Edge ;
+    gcm:child gcm:cooling_valve ;
+    gcm:feature "hour_cos",
+        "hour_sin",
+        "workday" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:calendar .
+
+gcm:calendar__to__heating_valve a gcm:Edge ;
+    gcm:child gcm:heating_valve ;
     gcm:feature "hour_cos",
         "hour_sin",
         "workday" ;
@@ -58,10 +105,18 @@ gcm:co2__to__VAV_damper a gcm:Edge ;
 
 gcm:co2__to__indoor_temperature a gcm:Edge ;
     gcm:child gcm:indoor_temperature ;
-    gcm:feature "co2",
-        "co2_lag1" ;
+    gcm:feature "co2_lag1" ;
     gcm:kind "proxy" ;
     gcm:parent gcm:co2 .
+
+gcm:cooling_valve__to__KB02_supply a gcm:Edge ;
+    gcm:child gcm:KB02_supply ;
+    gcm:component "chilled_beam" ;
+    gcm:feature "cooling_valve",
+        "cooling_valve_ma16",
+        "cooling_valve_ma4" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:cooling_valve .
 
 gcm:cooling_valve_t_1___to__indoor_temperature a gcm:Edge ;
     gcm:child gcm:indoor_temperature ;
@@ -80,19 +135,31 @@ gcm:heating_valve_t_1_t_2___to__indoor_temperature a gcm:Edge ;
 
 gcm:indoor_temperature__to__VAV_damper a gcm:Edge ;
     gcm:child gcm:VAV_damper ;
-    gcm:feature "indoor_temperature" ;
+    gcm:feature "indoor_temperature",
+        "indoor_temperature_ma16",
+        "indoor_temperature_ma2",
+        "indoor_temperature_ma4",
+        "indoor_temperature_ma8" ;
     gcm:kind "control" ;
     gcm:parent gcm:indoor_temperature .
 
 gcm:indoor_temperature__to__cooling_valve a gcm:Edge ;
     gcm:child gcm:cooling_valve ;
-    gcm:feature "indoor_temperature" ;
+    gcm:feature "indoor_temperature",
+        "indoor_temperature_ma16",
+        "indoor_temperature_ma2",
+        "indoor_temperature_ma4",
+        "indoor_temperature_ma8" ;
     gcm:kind "control" ;
     gcm:parent gcm:indoor_temperature .
 
 gcm:indoor_temperature__to__heating_valve a gcm:Edge ;
     gcm:child gcm:heating_valve ;
-    gcm:feature "indoor_temperature" ;
+    gcm:feature "indoor_temperature",
+        "indoor_temperature_ma16",
+        "indoor_temperature_ma2",
+        "indoor_temperature_ma4",
+        "indoor_temperature_ma8" ;
     gcm:kind "control" ;
     gcm:parent gcm:indoor_temperature .
 
@@ -104,19 +171,46 @@ gcm:indoor_temperature_t_1___to__indoor_temperature a gcm:Edge ;
 
 gcm:outdoor_temperature__to__AHU_supply_temperature a gcm:Edge ;
     gcm:child gcm:AHU_supply_temperature ;
-    gcm:feature "outdoor_temperature" ;
+    gcm:feature "outdoor_temperature",
+        "outdoor_temperature_ma48" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:outdoor_temperature .
+
+gcm:outdoor_temperature__to__KB02_supply a gcm:Edge ;
+    gcm:child gcm:KB02_supply ;
+    gcm:feature "outdoor_temperature",
+        "outdoor_temperature_ma48" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:outdoor_temperature .
+
+gcm:outdoor_temperature__to__VAV_damper a gcm:Edge ;
+    gcm:child gcm:VAV_damper ;
+    gcm:feature "outdoor_temperature_ma48" ;
     gcm:kind "control" ;
     gcm:parent gcm:outdoor_temperature .
 
 gcm:outdoor_temperature__to__VS02_supply a gcm:Edge ;
     gcm:child gcm:VS02_supply ;
-    gcm:feature "outdoor_temperature" ;
+    gcm:feature "outdoor_temperature",
+        "outdoor_temperature_ma48" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:outdoor_temperature .
+
+gcm:outdoor_temperature__to__cooling_valve a gcm:Edge ;
+    gcm:child gcm:cooling_valve ;
+    gcm:feature "outdoor_temperature_ma48" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:outdoor_temperature .
+
+gcm:outdoor_temperature__to__heating_valve a gcm:Edge ;
+    gcm:child gcm:heating_valve ;
+    gcm:feature "outdoor_temperature_ma48" ;
     gcm:kind "control" ;
     gcm:parent gcm:outdoor_temperature .
 
 gcm:outdoor_temperature__to__indoor_temperature a gcm:Edge ;
     gcm:child gcm:indoor_temperature ;
-    gcm:feature "outdoor_temperature_ma6" ;
+    gcm:feature "outdoor_temperature_ma6_lag1" ;
     gcm:kind "physical" ;
     gcm:parent gcm:outdoor_temperature .
 
@@ -126,11 +220,82 @@ gcm:relative_humidity__to__KB02_supply a gcm:Edge ;
     gcm:kind "control" ;
     gcm:parent gcm:relative_humidity .
 
+gcm:relative_humidity__to__cooling_valve a gcm:Edge ;
+    gcm:child gcm:cooling_valve ;
+    gcm:feature "relative_humidity" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:relative_humidity .
+
+gcm:setpoint__to__VAV_damper a gcm:Edge ;
+    gcm:child gcm:VAV_damper ;
+    gcm:feature "setpoint",
+        "setpoint_ma16",
+        "setpoint_ma2",
+        "setpoint_ma4",
+        "setpoint_ma8" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:setpoint .
+
+gcm:setpoint__to__cooling_valve a gcm:Edge ;
+    gcm:child gcm:cooling_valve ;
+    gcm:feature "setpoint",
+        "setpoint_ma16",
+        "setpoint_ma2",
+        "setpoint_ma4",
+        "setpoint_ma8" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:setpoint .
+
+gcm:setpoint__to__heating_valve a gcm:Edge ;
+    gcm:child gcm:heating_valve ;
+    gcm:feature "setpoint",
+        "setpoint_ma16",
+        "setpoint_ma2",
+        "setpoint_ma4",
+        "setpoint_ma8" ;
+    gcm:kind "control" ;
+    gcm:parent gcm:setpoint .
+
 gcm:solar_radiation__to__indoor_temperature a gcm:Edge ;
     gcm:child gcm:indoor_temperature ;
-    gcm:feature "solar_radiation_ma4" ;
+    gcm:feature "solar_radiation_lag1",
+        "solar_radiation_ma4_lag1" ;
     gcm:kind "physical" ;
     gcm:parent gcm:solar_radiation .
+
+gcm:AHU_supply_temperature_t_1 a gcm:LagNode ;
+    rdfs:label "AHU_supply_temperature(t-1)" ;
+    gcm:causes gcm:indoor_temperature ;
+    gcm:isRoot true ;
+    gcm:lagOf gcm:AHU_supply_temperature ;
+    gcm:layer 4 .
+
+gcm:KB02_supply_t_1 a gcm:LagNode ;
+    rdfs:label "KB02_supply(t-1)" ;
+    gcm:causes gcm:indoor_temperature ;
+    gcm:isRoot true ;
+    gcm:lagOf gcm:KB02_supply ;
+    gcm:layer 4 .
+
+gcm:VAV_damper__err_1h a gcm:Interaction ;
+    rdfs:label "err_1h" ;
+    gcm:expression "indoor_temperature_ma2 - setpoint_ma2" ;
+    gcm:monotone 0 .
+
+gcm:VAV_damper__err_2h a gcm:Interaction ;
+    rdfs:label "err_2h" ;
+    gcm:expression "indoor_temperature_ma4 - setpoint_ma4" ;
+    gcm:monotone 0 .
+
+gcm:VAV_damper__err_4h a gcm:Interaction ;
+    rdfs:label "err_4h" ;
+    gcm:expression "indoor_temperature_ma8 - setpoint_ma8" ;
+    gcm:monotone 0 .
+
+gcm:VAV_damper__err_8h a gcm:Interaction ;
+    rdfs:label "err_8h" ;
+    gcm:expression "indoor_temperature_ma16 - setpoint_ma16" ;
+    gcm:monotone 0 .
 
 gcm:VAV_damper_t_1 a gcm:LagNode ;
     rdfs:label "VAV_damper(t-1)" ;
@@ -139,12 +304,52 @@ gcm:VAV_damper_t_1 a gcm:LagNode ;
     gcm:lagOf gcm:VAV_damper ;
     gcm:layer 3 .
 
+gcm:cooling_valve__err_1h a gcm:Interaction ;
+    rdfs:label "err_1h" ;
+    gcm:expression "indoor_temperature_ma2 - setpoint_ma2" ;
+    gcm:monotone 0 .
+
+gcm:cooling_valve__err_2h a gcm:Interaction ;
+    rdfs:label "err_2h" ;
+    gcm:expression "indoor_temperature_ma4 - setpoint_ma4" ;
+    gcm:monotone 0 .
+
+gcm:cooling_valve__err_4h a gcm:Interaction ;
+    rdfs:label "err_4h" ;
+    gcm:expression "indoor_temperature_ma8 - setpoint_ma8" ;
+    gcm:monotone 0 .
+
+gcm:cooling_valve__err_8h a gcm:Interaction ;
+    rdfs:label "err_8h" ;
+    gcm:expression "indoor_temperature_ma16 - setpoint_ma16" ;
+    gcm:monotone 0 .
+
 gcm:cooling_valve_t_1 a gcm:LagNode ;
     rdfs:label "cooling_valve(t-1)" ;
     gcm:causes gcm:indoor_temperature ;
     gcm:isRoot true ;
     gcm:lagOf gcm:cooling_valve ;
     gcm:layer 3 .
+
+gcm:heating_valve__err_1h a gcm:Interaction ;
+    rdfs:label "err_1h" ;
+    gcm:expression "indoor_temperature_ma2 - setpoint_ma2" ;
+    gcm:monotone 0 .
+
+gcm:heating_valve__err_2h a gcm:Interaction ;
+    rdfs:label "err_2h" ;
+    gcm:expression "indoor_temperature_ma4 - setpoint_ma4" ;
+    gcm:monotone 0 .
+
+gcm:heating_valve__err_4h a gcm:Interaction ;
+    rdfs:label "err_4h" ;
+    gcm:expression "indoor_temperature_ma8 - setpoint_ma8" ;
+    gcm:monotone 0 .
+
+gcm:heating_valve__err_8h a gcm:Interaction ;
+    rdfs:label "err_8h" ;
+    gcm:expression "indoor_temperature_ma16 - setpoint_ma16" ;
+    gcm:monotone 0 .
 
 gcm:heating_valve_t_1_t_2 a gcm:LagNode ;
     rdfs:label "heating_valve(t-1, t-2)" ;
@@ -153,19 +358,70 @@ gcm:heating_valve_t_1_t_2 a gcm:LagNode ;
     gcm:lagOf gcm:heating_valve ;
     gcm:layer 3 .
 
-gcm:indoor_temperature__chilled_beam_air a gcm:Interaction ;
-    rdfs:label "chilled_beam_air" ;
-    gcm:expression "VAV_damper_lag1 * (indoor_temperature_lag1 - AHU_supply_temperature_lag1)" ;
+gcm:indoor_temperature__dT_chilled_water a gcm:Interaction ;
+    rdfs:label "dT_chilled_water" ;
+    gcm:expression "indoor_temperature_lag1 - KB02_supply_lag1" ;
     gcm:monotone -1 .
 
-gcm:indoor_temperature__chilled_beam_water a gcm:Interaction ;
-    rdfs:label "chilled_beam_water" ;
-    gcm:expression "cooling_valve_lag1 * VAV_damper_lag1 * (indoor_temperature_lag1 - KB02_supply_lag1)" ;
+gcm:indoor_temperature__dT_envelope a gcm:Interaction ;
+    rdfs:label "dT_envelope" ;
+    gcm:expression "outdoor_temperature_ma6_lag1 - indoor_temperature_lag1" ;
+    gcm:monotone 1 .
+
+gcm:indoor_temperature__dT_radiator a gcm:Interaction ;
+    rdfs:label "dT_radiator" ;
+    gcm:expression "(VS02_supply_lag1 + VS02_supply_lag2) / 2 - indoor_temperature_lag1" ;
+    gcm:monotone 1 .
+
+gcm:indoor_temperature__dT_supply_air a gcm:Interaction ;
+    rdfs:label "dT_supply_air" ;
+    gcm:expression "indoor_temperature_lag1 - AHU_supply_temperature_lag1" ;
     gcm:monotone -1 .
 
-gcm:indoor_temperature__radiator_drive a gcm:Interaction ;
-    rdfs:label "radiator_drive" ;
-    gcm:expression "(heating_valve_lag1 + heating_valve_lag2) / 2 * ((VS02_supply_lag1 + VS02_supply_lag2) / 2 - indoor_temperature_lag1)" ;
+gcm:indoor_temperature__group__building_mass a gcm:AdditiveGroup ;
+    rdfs:label "building_mass" ;
+    gcm:column "hour_cos",
+        "hour_sin",
+        "indoor_temperature_lag1",
+        "workday" .
+
+gcm:indoor_temperature__group__chilled_beam a gcm:AdditiveGroup ;
+    rdfs:label "chilled_beam" ;
+    gcm:column "VAV_damper_lag1",
+        "cooling_valve_lag1",
+        "dT_chilled_water",
+        "dT_supply_air",
+        "hour_cos",
+        "hour_sin",
+        "workday" .
+
+gcm:indoor_temperature__group__envelope a gcm:AdditiveGroup ;
+    rdfs:label "envelope" ;
+    gcm:column "dT_envelope" .
+
+gcm:indoor_temperature__group__occupancy a gcm:AdditiveGroup ;
+    rdfs:label "occupancy" ;
+    gcm:column "co2_lag1" .
+
+gcm:indoor_temperature__group__radiator a gcm:AdditiveGroup ;
+    rdfs:label "radiator" ;
+    gcm:column "dT_radiator",
+        "heating_valve_1h" .
+
+gcm:indoor_temperature__group__schedule a gcm:AdditiveGroup ;
+    rdfs:label "schedule" ;
+    gcm:column "hour_cos",
+        "hour_sin",
+        "workday" .
+
+gcm:indoor_temperature__group__solar a gcm:AdditiveGroup ;
+    rdfs:label "solar" ;
+    gcm:column "solar_radiation_lag1",
+        "solar_radiation_ma4_lag1" .
+
+gcm:indoor_temperature__heating_valve_1h a gcm:Interaction ;
+    rdfs:label "heating_valve_1h" ;
+    gcm:expression "(heating_valve_lag1 + heating_valve_lag2) / 2" ;
     gcm:monotone 1 .
 
 gcm:indoor_temperature_t_1 a gcm:LagNode ;
@@ -175,22 +431,9 @@ gcm:indoor_temperature_t_1 a gcm:LagNode ;
     gcm:lagOf gcm:indoor_temperature ;
     gcm:layer 2 .
 
-gcm:relative_humidity a gcm:Variable ;
-    rdfs:label "relative_humidity" ;
-    gcm:causes gcm:KB02_supply ;
-    gcm:isRoot true ;
-    gcm:layer 0 .
-
 gcm:solar_radiation a gcm:Variable ;
     rdfs:label "solar_radiation" ;
     gcm:causes gcm:indoor_temperature ;
-    gcm:isRoot true ;
-    gcm:layer 0 .
-
-gcm:calendar a gcm:Variable ;
-    rdfs:label "calendar" ;
-    gcm:causes gcm:VAV_damper,
-        gcm:indoor_temperature ;
     gcm:isRoot true ;
     gcm:layer 0 .
 
@@ -201,17 +444,20 @@ gcm:co2 a gcm:Variable ;
     gcm:isRoot true ;
     gcm:layer 0 .
 
-gcm:AHU_supply_temperature a gcm:Variable ;
-    rdfs:label "AHU_supply_temperature" ;
-    gcm:causes gcm:indoor_temperature ;
-    gcm:isRoot false ;
-    gcm:layer 1 .
+gcm:relative_humidity a gcm:Variable ;
+    rdfs:label "relative_humidity" ;
+    gcm:causes gcm:KB02_supply,
+        gcm:cooling_valve ;
+    gcm:isRoot true ;
+    gcm:layer 0 .
 
-gcm:KB02_supply a gcm:Variable ;
-    rdfs:label "KB02_supply" ;
-    gcm:causes gcm:indoor_temperature ;
-    gcm:isRoot false ;
-    gcm:layer 1 .
+gcm:setpoint a gcm:Variable ;
+    rdfs:label "setpoint" ;
+    gcm:causes gcm:VAV_damper,
+        gcm:cooling_valve,
+        gcm:heating_valve ;
+    gcm:isRoot true ;
+    gcm:layer 0 .
 
 gcm:VS02_supply a gcm:Variable ;
     rdfs:label "VS02_supply" ;
@@ -219,26 +465,66 @@ gcm:VS02_supply a gcm:Variable ;
     gcm:isRoot false ;
     gcm:layer 1 .
 
-gcm:cooling_valve a gcm:Variable ;
-    rdfs:label "cooling_valve" ;
+gcm:AHU_supply_temperature a gcm:Variable ;
+    rdfs:label "AHU_supply_temperature" ;
     gcm:isRoot false ;
-    gcm:layer 3 .
+    gcm:layer 4 .
 
-gcm:heating_valve a gcm:Variable ;
-    rdfs:label "heating_valve" ;
-    gcm:isRoot false ;
-    gcm:layer 3 .
-
-gcm:outdoor_temperature a gcm:Variable ;
-    rdfs:label "outdoor_temperature" ;
+gcm:calendar a gcm:Variable ;
+    rdfs:label "calendar" ;
     gcm:causes gcm:AHU_supply_temperature,
+        gcm:KB02_supply,
+        gcm:VAV_damper,
         gcm:VS02_supply,
+        gcm:cooling_valve,
+        gcm:heating_valve,
         gcm:indoor_temperature ;
     gcm:isRoot true ;
     gcm:layer 0 .
 
+gcm:outdoor_temperature a gcm:Variable ;
+    rdfs:label "outdoor_temperature" ;
+    gcm:causes gcm:AHU_supply_temperature,
+        gcm:KB02_supply,
+        gcm:VAV_damper,
+        gcm:VS02_supply,
+        gcm:cooling_valve,
+        gcm:heating_valve,
+        gcm:indoor_temperature ;
+    gcm:isRoot true ;
+    gcm:layer 0 .
+
+gcm:KB02_supply a gcm:Variable ;
+    rdfs:label "KB02_supply" ;
+    gcm:isRoot false ;
+    gcm:layer 4 .
+
+gcm:heating_valve a gcm:Variable ;
+    rdfs:label "heating_valve" ;
+    gcm:hasInteraction gcm:heating_valve__err_1h,
+        gcm:heating_valve__err_2h,
+        gcm:heating_valve__err_4h,
+        gcm:heating_valve__err_8h ;
+    gcm:isRoot false ;
+    gcm:layer 3 .
+
 gcm:VAV_damper a gcm:Variable ;
     rdfs:label "VAV_damper" ;
+    gcm:causes gcm:AHU_supply_temperature ;
+    gcm:hasInteraction gcm:VAV_damper__err_1h,
+        gcm:VAV_damper__err_2h,
+        gcm:VAV_damper__err_4h,
+        gcm:VAV_damper__err_8h ;
+    gcm:isRoot false ;
+    gcm:layer 3 .
+
+gcm:cooling_valve a gcm:Variable ;
+    rdfs:label "cooling_valve" ;
+    gcm:causes gcm:KB02_supply ;
+    gcm:hasInteraction gcm:cooling_valve__err_1h,
+        gcm:cooling_valve__err_2h,
+        gcm:cooling_valve__err_4h,
+        gcm:cooling_valve__err_8h ;
     gcm:isRoot false ;
     gcm:layer 3 .
 
@@ -247,9 +533,19 @@ gcm:indoor_temperature a gcm:Variable ;
     gcm:causes gcm:VAV_damper,
         gcm:cooling_valve,
         gcm:heating_valve ;
-    gcm:hasInteraction gcm:indoor_temperature__chilled_beam_air,
-        gcm:indoor_temperature__chilled_beam_water,
-        gcm:indoor_temperature__radiator_drive ;
+    gcm:deltaTarget true ;
+    gcm:hasGroup gcm:indoor_temperature__group__building_mass,
+        gcm:indoor_temperature__group__chilled_beam,
+        gcm:indoor_temperature__group__envelope,
+        gcm:indoor_temperature__group__occupancy,
+        gcm:indoor_temperature__group__radiator,
+        gcm:indoor_temperature__group__schedule,
+        gcm:indoor_temperature__group__solar ;
+    gcm:hasInteraction gcm:indoor_temperature__dT_chilled_water,
+        gcm:indoor_temperature__dT_envelope,
+        gcm:indoor_temperature__dT_radiator,
+        gcm:indoor_temperature__dT_supply_air,
+        gcm:indoor_temperature__heating_valve_1h ;
     gcm:isRoot false ;
     gcm:layer 2 .
 
