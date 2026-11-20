@@ -548,4 +548,3 @@ gcm:indoor_temperature a gcm:Variable ;
         gcm:indoor_temperature__heating_valve_1h ;
     gcm:isRoot false ;
     gcm:layer 2 .
-

@@ -1,7 +1,6 @@
 #!/bin/bash
-# Full pipeline. Set FDD_DATA to the pickle of 30-min series (dict of DataFrames with a 'value' column).
 set -e
-export FDD_DATA=${FDD_DATA:-../07-D2-02_data/dfs.pkl}
+export FDD_DATA=${FDD_DATA:-../07-D4-01_data/dfs.pkl}
 python run_fit.py         # fit the SCM (mechs.pkl)
 python run_graph.py       # edge checks
 python run_eval.py        # one-step and 24-h simulation accuracy

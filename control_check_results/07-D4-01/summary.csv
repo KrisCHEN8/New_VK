@@ -1,0 +1,14 @@
+check,description,hours,pct_time,n_events,longest_h
+temp_low,GT11 below SP - deviation limit,2.0,0.01,1,2.0
+temp_high,GT11 above SP + deviation limit,2446.5,10.19,256,67.5
+simultaneous_heat_cool,SV2x and SV4x open at the same time,0.0,0.0,0,0.0
+heat_before_damper_min,SV2x open while ST4x not at min flow,0.0,0.0,0,0.0
+cool_before_damper_max,SV4x open while ST4x not near max flow,2785.0,11.6,699,14.0
+heating_on_cool_demand,SV2x open while GT11 above cooling edge,0.0,0.0,0,0.0
+cooling_on_heat_demand,SV4x/ST4x open while GT11 below heating edge,0.0,0.0,0,0.0
+no_heat_response,"GT11 below heating edge, SV2x closed",0.0,0.0,0,0.0
+no_cool_response,"GT11 above cooling edge, ST4x at min and SV4x closed",0.0,0.0,0,0.0
+heating_in_deadzone,SV2x open while GT11 well inside dead zone,4.0,0.02,2,2.0
+cooling_in_deadzone,SV4x/ST4x open while GT11 well inside dead zone,20.0,0.08,10,2.0
+cooling_saturated,"ST4x and SV4x fully open, GT11 still above cooling edge",903.0,3.76,164,12.5
+heating_saturated,"SV2x fully open, GT11 still below heating edge",0.0,0.0,0,0.0

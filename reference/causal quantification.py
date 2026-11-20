@@ -21,7 +21,7 @@ REFERENCE = {"dT_envelope": 0.0, "solar_radiation_lag1": 0.0, "solar_radiation_m
              "hour_sin": 0.0, "hour_cos": -1.0, "workday": 0.0,
              "cooling_valve_lag1": 0.0, "VAV_damper_lag1": 0.0, "heating_valve_1h": 0.0}
 
-# Shift interventions
+# Interventions
 SHIFTS = {
     "Outdoor +5 K": {"outdoor_temperature": lambda x: x + 5},
     "Solar +50 %": {"solar_radiation": lambda x: x * 1.5},
@@ -42,9 +42,9 @@ def load_data(path="07-D2-02_data/dfs.pkl"):
     d = pd.read_pickle(path)
     df = pd.concat({k: v["value"] for k, v in d.items()}, axis=1).sort_index().asfreq(FREQ)
     df.index = df.index.tz_localize("UTC").tz_convert(TZ)
-    df = df.interpolate(limit=4)          # a handful of single missing values
-    for c, (lo, hi) in BOUNDS.items():    # openings recorded slightly outside 0-100 would make a simulation
-        df[c] = df[c].clip(lo, hi)        # that clips differ from the data at tree splits on 100
+    df = df.interpolate(limit=4)          
+    for c, (lo, hi) in BOUNDS.items():    
+        df[c] = df[c].clip(lo, hi)
     hour = df.index.hour + df.index.minute / 60
     df["hour_sin"], df["hour_cos"] = np.sin(2 * np.pi * hour / 24), np.cos(2 * np.pi * hour / 24)
     hol = holidays.country_holidays(gcm.CONFIG["country"], years=sorted(set(df.index.year)))
@@ -79,8 +79,6 @@ def _at(a, t, k):
 
 def _window_mean(arrs, var, k, w, t):
     """Mean of the w values of 'var' ending k steps before t."""
-    # summed in a fixed order so training and step-wise simulation give bit-identical values
-    # (tree splits can sit exactly on a training value; a 1e-15 difference would change the branch)
     total = _at(arrs[var], t, k)
     for j in range(k + 1, k + w):
         total = total + _at(arrs[var], t, j)
@@ -100,9 +98,7 @@ def design(mech, arrs, t=None):
     return X[0] if t is None else X
 
 
-# ---------------------------------------------------------------------------
 # Mechanisms
-# ---------------------------------------------------------------------------
 @dataclass
 class Mechanism:
     node: str
@@ -250,9 +246,7 @@ def abduct(mechs, arrs):
     return u
 
 
-# ---------------------------------------------------------------------------
-# Counterfactual simulation (vectorised over scenarios)
-# ---------------------------------------------------------------------------
+# Simulation
 def simulate(mechs, arrs, noise, t0, t1, active=1.0, interventions=None, nodes=None):
     """
     Simulation of steps t0..t1-1 for S scenarios. Before t0 every variable keeps its observed value.
@@ -396,9 +390,7 @@ def summarize_effects(effects, regimes):
     return table, curves
 
 
-# ---------------------------------------------------------------------------
 # Workflow
-# ---------------------------------------------------------------------------
 def run_quantification(df, G, shifts=SHIFTS, n_boot=20, horizon=48):
     """
     Steps 1-4 end to end. Returns a dict of tables:
