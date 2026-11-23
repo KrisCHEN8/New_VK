@@ -363,11 +363,6 @@ gcm:indoor_temperature__dT_chilled_water a gcm:Interaction ;
     gcm:expression "indoor_temperature_lag1 - KB02_supply_lag1" ;
     gcm:monotone -1 .
 
-gcm:indoor_temperature__dT_envelope a gcm:Interaction ;
-    rdfs:label "dT_envelope" ;
-    gcm:expression "outdoor_temperature_ma6_lag1 - indoor_temperature_lag1" ;
-    gcm:monotone 1 .
-
 gcm:indoor_temperature__dT_radiator a gcm:Interaction ;
     rdfs:label "dT_radiator" ;
     gcm:expression "(VS02_supply_lag1 + VS02_supply_lag2) / 2 - indoor_temperature_lag1" ;
@@ -397,7 +392,7 @@ gcm:indoor_temperature__group__chilled_beam a gcm:AdditiveGroup ;
 
 gcm:indoor_temperature__group__envelope a gcm:AdditiveGroup ;
     rdfs:label "envelope" ;
-    gcm:column "dT_envelope" .
+    gcm:column "outdoor_temperature_ma6_lag1" .
 
 gcm:indoor_temperature__group__occupancy a gcm:AdditiveGroup ;
     rdfs:label "occupancy" ;
@@ -542,9 +537,9 @@ gcm:indoor_temperature a gcm:Variable ;
         gcm:indoor_temperature__group__schedule,
         gcm:indoor_temperature__group__solar ;
     gcm:hasInteraction gcm:indoor_temperature__dT_chilled_water,
-        gcm:indoor_temperature__dT_envelope,
         gcm:indoor_temperature__dT_radiator,
         gcm:indoor_temperature__dT_supply_air,
         gcm:indoor_temperature__heating_valve_1h ;
     gcm:isRoot false ;
     gcm:layer 2 .
+

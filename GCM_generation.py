@@ -81,7 +81,6 @@ ERR_TERMS = {f"err_{w // 2}h": f"{T}_ma{w} - setpoint_ma{w}" for w in ERR_WINDOW
 INTERACTIONS = {
     T: {
         # temperature differences that drive the heat flows
-        "dT_envelope": "outdoor_temperature_ma6_lag1 - indoor_temperature_lag1",
         "dT_chilled_water": "indoor_temperature_lag1 - KB02_supply_lag1",           # chilled beam, water side
         "dT_supply_air": "indoor_temperature_lag1 - AHU_supply_temperature_lag1",   # chilled beam, air side
         "dT_radiator": "(VS02_supply_lag1 + VS02_supply_lag2) / 2 - indoor_temperature_lag1",
@@ -92,14 +91,14 @@ INTERACTIONS = {
 
 # Feature columns that enter the mechanism only through its derived terms
 INTERACTION_INPUTS = {
-    T: ["outdoor_temperature_ma6_lag1", "KB02_supply_lag1", "AHU_supply_temperature_lag1",
+    T: ["KB02_supply_lag1", "AHU_supply_temperature_lag1",
         "heating_valve_lag1", "heating_valve_lag2", "VS02_supply_lag1", "VS02_supply_lag2"],
     **{c: ROOM_NOW[1:] + SETPOINT_NOW[1:] for c in CONTROLLERS},
 }
 
 GROUPS = {
     T: {
-        "envelope": ["dT_envelope"],
+        "envelope": ["outdoor_temperature_ma6_lag1"],
         "solar": ["solar_radiation_lag1", "solar_radiation_ma4_lag1"],
         "occupancy": ["co2_lag1"],
         "schedule": CAL_FEATURES,
@@ -112,7 +111,7 @@ GROUPS = {
 # Monotonic effects
 MONOTONE = {
     T: {
-        "dT_envelope": +1, "solar_radiation_lag1": +1, "solar_radiation_ma4_lag1": +1, "co2_lag1": +1,
+        "outdoor_temperature_ma6_lag1": +1, "solar_radiation_lag1": +1, "solar_radiation_ma4_lag1": +1, "co2_lag1": +1,
         "cooling_valve_lag1": -1, "dT_chilled_water": -1, "dT_supply_air": -1,
         "heating_valve_1h": +1, "dT_radiator": +1,
         f"{T}_lag1": -1,      # the target is the change: a warmer room loses more heat to the building
