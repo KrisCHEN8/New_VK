@@ -53,7 +53,7 @@ EDGES = [
     # ("cooling_valve", "cooling_flow", ["cooling_valve"]),
     # ("heating_valve", "heating_flow", ["heating_valve"]),
 
-    # physical effects on the room (delayed: every cause is at t-1 or earlier)
+    # physical effects on the room
     (T, T, [f"{T}_lag1"]),                                          # thermal inertia, exchange with the building mass
     ("cooling_valve", T, ["cooling_valve_lag1"]),                           # chilled beam, faster
     ("KB02_supply", T, ["KB02_supply_lag1"]),
