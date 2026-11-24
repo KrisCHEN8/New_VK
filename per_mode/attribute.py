@@ -1,27 +1,16 @@
-"""
-Attribution with the assembled (switched) XGBoost model, plus physical sanity checks.
-
-For every 30-min step, the model of its mode (the 'other' model for steps outside the saved runs) gives an exact additive split:
-    predicted dT = mode baseline + sum over graph groups of c_g
-where c_g = f_g(x) - mean of f_g over that model's training steps (the SHAP value of the group, since the
-groups are additive), and the mode baseline = the model's mean prediction over its training steps.
-
-  * summing the mode baselines over a day -> how much each MODE moves the room per day
-  * summing c_g over a day                -> how much each COMPONENT pushes the room above/below
-                                             what is typical for the mode it is in
-"""
 import sys
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
+from prep import MODES, DATA, RES
+import study as S
+
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from prep import MODES, DATA, RES   # noqa: E402
-import study as S                   # noqa: E402
 
-GROUP_ORDER = ["chilled_beam", "building_mass", "schedule", "solar", "envelope", "occupancy", "radiator"]
+
+GROUP_ORDER = ["chilled_beam", "building_mass", "schedule", "solar", "envelope", "occupancy"]
 SEASON = {12: "winter", 1: "winter", 2: "winter", 3: "spring", 4: "spring", 5: "spring",
           6: "summer", 7: "summer", 8: "summer", 9: "autumn", 10: "autumn", 11: "autumn"}
 
@@ -55,19 +44,20 @@ def main():
     D.to_pickle(RES / "decomposition.pkl")
     comps = [g for g in GROUP_ORDER if g in D]
 
-    # ---- 1. which modes move the room: K/day from mode baselines, by season
+    # which modes move the room: K/day from mode baselines, by season
     day = D.assign(season=D.index.month.map(SEASON), date=D.index.normalize())
     n_days = day.groupby("season").date.nunique()
-    by_mode = day.groupby(["season", "mode"]).pred.sum().unstack().div(n_days, axis=0)          # model, K/day
+    by_mode = day.groupby(["season", "mode"]).pred.sum().unstack().div(n_days, axis=0)    # model, K/day
     by_mode_obs = day.groupby(["season", "mode"]).obs.sum().unstack().div(n_days, axis=0)      # measured
-    by_mode_obs.to_csv(RES / "mode_K_per_day_measured.csv")
+    # by_mode_obs.to_csv(RES / "mode_K_per_day_measured.csv")
     hours = (day.groupby(["season", "mode"]).size().unstack() / 2).div(n_days, axis=0)
     print("MODE effect (model, K/day; measured in second table; hours/day in brackets)")
     print((by_mode.round(2).astype(str) + " (" + hours.round(1).astype(str) + "h)").to_string())
     print(by_mode_obs.round(2).to_string())
-    by_mode.to_csv(RES / "mode_K_per_day.csv"); hours.to_csv(RES / "mode_hours_per_day.csv")
+    # by_mode.to_csv(RES / "mode_K_per_day.csv")
+    hours.to_csv(RES / "mode_hours_per_day.csv")
 
-    # ---- 2. which components move the room within a mode: mean |c| (K/h) and seasonal mean (K/day)
+    # which components move the room within a mode
     absc = D.groupby("mode")[comps].apply(lambda d: d.abs().mean() * 2)        # K/h
     print("\nmean |contribution| per step, K/h")
     print(absc.round(3).to_string())
@@ -77,7 +67,7 @@ def main():
     print(comp_season.round(2).to_string())
     comp_season.to_csv(RES / "component_K_per_day_by_season.csv")
 
-    # ---- 3. sanity checks
+    # sanity checks
     chk = []
     from prep import fm
     raw = fm.load(DATA).reindex(info.index)

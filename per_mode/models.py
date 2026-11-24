@@ -1,22 +1,11 @@
-"""
-Model classes for the indoor_temperature mechanism of the user's causal graph.
-
-All models take the graph's design matrix (node_frame) and respect its settings:
-  - monotone signs  (gcm.monotone_constraints)
-  - additive groups (gcm interaction_groups): a model may combine columns only inside one group
-
-LinearPhys : sign-constrained least squares on the graph's columns, plus the two products allowed inside the
-             chilled_beam group (valve x water dT, damper x supply-air dT) - the physical form of beam heat transfer.
-XGBGraph   : XGBoost with the graph's monotone and interaction constraints.
-Both can drop the columns of an emitter that is off by definition of the mode ("structural zeros").
-"""
 import numpy as np
 import pandas as pd
 import xgboost as xgb
-from scipy.optimize import lsq_linear
+
 
 BEAM_WATER = ["cooling_valve_lag1", "dT_chilled_water"]
 BEAM_AIR = ["VAV_damper_lag1", "dT_supply_air"]
+
 
 # emitter columns that are fixed at 'off' by the definition of each mode
 INACTIVE = {
@@ -32,61 +21,6 @@ INACTIVE = {
 def mode_columns(all_cols, mode, mask_inactive=True):
     drop = set(INACTIVE.get(mode, [])) if mask_inactive else set()
     return [c for c in all_cols if c not in drop]
-
-
-class LinearPhys:
-    name = "linear"
-
-    def __init__(self, monotone, groups, products=True):
-        self.monotone, self.groups, self.products = dict(monotone), groups, products
-
-    def _design(self, X):
-        Z = X.copy()
-        if self.products:
-            if {"cooling_valve_lag1", "dT_chilled_water"} <= set(X):
-                Z["beam_water_x"] = X.cooling_valve_lag1 / 100 * X.dT_chilled_water
-            if {"VAV_damper_lag1", "dT_supply_air"} <= set(X):
-                Z["beam_air_x"] = X.VAV_damper_lag1 / 100 * X.dT_supply_air
-        return Z
-
-    def fit(self, X, y, **_):
-        self.cols = list(X.columns)                # input columns (as for XGBGraph)
-        Z = self._design(X)
-        sign = {**self.monotone, "beam_water_x": -1, "beam_air_x": -1}
-        self.zcols = list(Z.columns)
-        self.mu, self.sd = Z.mean(), Z.std().replace(0, 1)
-        A = np.c_[np.ones(len(Z)), ((Z - self.mu) / self.sd).values]
-        lb = [-np.inf] + [0 if sign.get(c, 0) > 0 else -np.inf for c in self.zcols]
-        ub = [np.inf] + [0 if sign.get(c, 0) < 0 else np.inf for c in self.zcols]
-        r = lsq_linear(A, y.values, bounds=(lb, ub), method="bvls")
-        self.b0 = r.x[0]
-        self.coef = pd.Series(r.x[1:] / self.sd.values, index=self.zcols)       # per original unit
-        self.intercept = self.b0 - (self.coef * self.mu).sum()
-        return self
-
-    def predict(self, X):
-        return self.intercept + self._design(X[self.cols])[self.zcols].values @ self.coef.values
-
-    def group_contributions(self, X):
-        """Additive pieces per graph group (calendar columns go to 'schedule'); the intercept separately."""
-        Z = self._design(X[self.cols])[self.zcols]
-        parts = Z * self.coef
-        out = {}
-        for c in self.zcols:
-            g = _group_of(c, self.groups)
-            out[g] = out.get(g, 0) + parts[c]
-        out = pd.DataFrame(out, index=X.index)
-        out["_intercept"] = self.intercept
-        return out
-
-
-def _group_of(col, groups):
-    if col in ("beam_water_x", "beam_air_x"):
-        return "chilled_beam"
-    owners = [g for g, cols in groups.items() if col in cols]
-    if "schedule" in owners and len(owners) > 1:           # calendar columns belong to several groups
-        return "schedule"
-    return owners[0]
 
 
 class XGBGraph:
@@ -122,7 +56,7 @@ class XGBGraph:
 
     def group_contributions(self, X):
         """
-        Exact additive decomposition: with interaction constraints every tree uses columns of one group only,
+        Additive decomposition: with interaction constraints every tree uses columns of one group only,
         so the prediction = base + sum over trees, and each tree belongs to one group. Trees that use only
         calendar columns are assigned to 'schedule'.
         """

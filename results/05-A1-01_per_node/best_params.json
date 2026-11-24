@@ -1,44 +1,44 @@
 {
  "beam_water_air": {
-  "max_depth": 8,
-  "min_child_weight": 50,
-  "reg_lambda": 1.0,
-  "n_trees": 61,
+  "max_depth": 6,
+  "min_child_weight": 10,
+  "reg_lambda": 10.0,
+  "n_trees": 72,
   "mask": true
  },
  "beam_air": {
-  "max_depth": 8,
+  "max_depth": 4,
   "min_child_weight": 10,
-  "reg_lambda": 1.0,
-  "n_trees": 472,
+  "reg_lambda": 5.0,
+  "n_trees": 337,
   "mask": true
  },
  "off_no_sun": {
   "max_depth": 6,
   "min_child_weight": 10,
   "reg_lambda": 10.0,
-  "n_trees": 187,
+  "n_trees": 191,
   "mask": true
  },
  "off_sunny": {
-  "max_depth": 3,
+  "max_depth": 8,
   "min_child_weight": 10,
   "reg_lambda": 1.0,
-  "n_trees": 54,
+  "n_trees": 30,
   "mask": true
  },
  "other": {
   "max_depth": 8,
   "min_child_weight": 10,
   "reg_lambda": 10.0,
-  "n_trees": 141,
+  "n_trees": 163,
   "mask": true
  },
  "global": {
-  "max_depth": 6,
-  "min_child_weight": 50,
-  "reg_lambda": 1.0,
-  "n_trees": 734,
+  "max_depth": 8,
+  "min_child_weight": 10,
+  "reg_lambda": 10.0,
+  "n_trees": 140,
   "mask": true
  }
 }

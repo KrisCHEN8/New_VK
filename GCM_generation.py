@@ -112,7 +112,7 @@ GROUPS = {
 MONOTONE = {
     T: {
         "outdoor_temperature_ma6_lag1": +1, "solar_radiation_lag1": +1, "solar_radiation_ma4_lag1": +1, "co2_lag1": +1,
-        "cooling_valve_lag1": -1, "dT_chilled_water": -1, "dT_supply_air": -1,
+        "cooling_valve_lag1": -1, "dT_chilled_water": -1, # "dT_supply_air": -1,
         "heating_valve_1h": +1, "dT_radiator": +1,
         f"{T}_lag1": -1,      # the target is the change: a warmer room loses more heat to the building
     },

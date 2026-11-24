@@ -10,7 +10,7 @@ import pandas as pd
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from prep import fm, DATA, RES, FIG, FIG_PREFIX   # noqa: E402
+from prep import fm, DATA, RES, FIG, FIG_PREFIX
 FIG.mkdir(parents=True, exist_ok=True)
 
 SURF, T1, T2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
@@ -23,38 +23,37 @@ plt.rcParams.update({"font.size": 9, "axes.edgecolor": GRID, "axes.labelcolor": 
 MODE_COL = {"beam_water_air": AQUA, "beam_air": VIOLET, "off_no_sun": BLUE, "off_sunny": YELLOW, "other": GREY}
 MODE_LAB = {"beam_water_air": "Beam water + air", "beam_air": "Air only", "off_no_sun": "Off, no sun",
             "off_sunny": "Off, sunny", "other": "Transitions (other)"}
-METH_LAB = {"switched_xgb_other": "Switched XGBoost (+ transition model)", "blend_xgb": "Blend switched/global XGBoost",
-            "switched_xgb": "Switched XGBoost (global for transitions)", "global_xgb": "Global XGBoost",
-            "switched_linear": "Switched linear", "switched_linear_other": "Switched linear (+ transition model)",
-            "global_linear": "Global linear", "persistence": "Persistence (no change)",
-            "mode_mean": "Mode average", "zero_change": "No change"}
+METH_LAB = {"switched_xgb_other": "Switched XGBoost (+ transition model)", "global_xgb": "Global XGBoost",
+            "persistence": "Persistence (no change)"}
+METH_STYLE = [("persistence", GREY, "--", 1.6), ("global_xgb", BLUE, "-", 1.6), ("switched_xgb_other", AQUA, "-", 2.2)]
 
 
 def title(ax, t):
     ax.set_title(t, loc="left", color=T1, fontweight="bold", fontsize=11)
 
 
+def _rmse_bars(ax, csv):
+    """Overall RMSE per method (from study.py's summary csv)."""
+    s = pd.read_csv(csv, index_col=0)
+    meths = [k for k, *_ in METH_STYLE]
+    cols = [c for _, c, *_ in METH_STYLE]
+    ax.barh([METH_LAB[m] for m in meths], s.loc[meths, "rmse_K"], color=cols, height=0.6)
+    for yy, v in enumerate(s.loc[meths, "rmse_K"]):
+        ax.text(v, yy, f" {v:.2f}", va="center", color=T1)
+    ax.set_xlabel("Overall RMSE of indoor temperature (K), test year 2024")
+    ax.set_xlim(0, 1.15 * s.loc[meths, "rmse_K"].max())
+    ax.grid(axis="y", visible=False)
+
+
 def fig_performance():
-    one = pd.read_csv(RES / "onestep_test.csv")
+    rec = pd.read_pickle(RES / "recursive3h_test.pkl")
     fr = pd.read_pickle(RES / "freerun_test.pkl")
-    fig, ax = plt.subplots(1, 2, figsize=(14, 4.8), gridspec_kw=dict(width_ratios=[1.05, 1]))
-    a = one[(one["mode"] == "ALL") & ~one.method.isin(["zero_change", "mode_mean"])].sort_values("r2")
-    cols = [AQUA if m == "switched_xgb_other" else "#9fd9c3" if "xgb" in m else "#c9c7c1" for m in a.method]
-    ax[0].barh([METH_LAB[m] for m in a.method], a.r2, color=cols, height=0.62)
-    for yy, v in enumerate(a.r2):
-        ax[0].text(v + 0.006, yy, f"{v:.3f}", va="center", color=T1)
-    ax[0].set_xlim(0, 0.5); ax[0].set_xlabel("R² of the 30-min temperature change, test year 2024")
-    ax[0].grid(axis="y", visible=False)
-    title(ax[0], "One-step accuracy (2024, never used for fitting)")
-    obs = fr["obs"]; h = np.arange(1, 49) / 2
-    for k, c, ls in [("persistence", GREY, "--"), ("global_linear", "#c9c7c1", "-"), ("switched_linear", T2, "-"),
-                     ("global_xgb", BLUE, "-"), ("switched_xgb_other", AQUA, "-")]:
-        e = np.sqrt(np.nanmean((fr[k] - obs) ** 2, axis=0))
-        ax[1].plot(h, e, color=c, lw=2.2 if k == "switched_xgb_other" else 1.6, ls=ls, label=METH_LAB[k])
-    ax[1].set_xlabel("Hours after midnight start (free-run, measured valves/weather)")
-    ax[1].set_ylabel("RMSE of indoor temperature (K)"); ax[1].set_xticks(range(0, 25, 3))
-    ax[1].legend(frameon=False, loc="upper left", fontsize=8)
-    title(ax[1], f"24 h free-run simulation ({len(fr['starts'])} days of 2024)")
+    fig, ax = plt.subplots(1, 2, figsize=(14, 3.6))
+    _rmse_bars(ax[0], RES / "recursive3h_test.csv")
+    title(ax[0], f"3 h recursive forecast ({len(rec['starts'])} starts, every 30 min)")
+    _rmse_bars(ax[1], RES / "freerun_test.csv")
+    ax[1].set_yticklabels([])
+    title(ax[1], f"24 h free-run simulation ({len(fr['starts'])} days, from midnight)")
     fig.tight_layout(); fig.savefig(FIG / f"{FIG_PREFIX}1_performance.png", dpi=130); plt.close(fig)
 
 
@@ -100,7 +99,7 @@ def fig_attribution():
     title(ax, "Which modes move the room: temperature change accumulated in each mode, K per day (bars = model, black = measured)")
 
     ax = fig.add_subplot(gs[1, 0])
-    comps = ["chilled_beam", "building_mass", "solar", "envelope", "occupancy", "schedule", "radiator"]
+    comps = ["chilled_beam", "building_mass", "solar", "envelope", "occupancy", "schedule"]
     M = absc.loc[modes, comps]
     im = ax.imshow(M.values, cmap=matplotlib.colors.ListedColormap(plt.cm.Blues(np.linspace(0.05, 0.95, 256))),
                    aspect="auto", vmin=0)
