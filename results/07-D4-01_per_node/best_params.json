@@ -1,0 +1,44 @@
+{
+ "beam_water_air": {
+  "max_depth": 8,
+  "min_child_weight": 10,
+  "reg_lambda": 1.0,
+  "n_trees": 51,
+  "mask": true
+ },
+ "beam_air": {
+  "max_depth": 4,
+  "min_child_weight": 10,
+  "reg_lambda": 1.0,
+  "n_trees": 150,
+  "mask": true
+ },
+ "off_no_sun": {
+  "max_depth": 8,
+  "min_child_weight": 50,
+  "reg_lambda": 5.0,
+  "n_trees": 115,
+  "mask": true
+ },
+ "off_sunny": {
+  "max_depth": 2,
+  "min_child_weight": 50,
+  "reg_lambda": 10.0,
+  "n_trees": 202,
+  "mask": true
+ },
+ "other": {
+  "max_depth": 8,
+  "min_child_weight": 10,
+  "reg_lambda": 10.0,
+  "n_trees": 157,
+  "mask": true
+ },
+ "global": {
+  "max_depth": 8,
+  "min_child_weight": 10,
+  "reg_lambda": 10.0,
+  "n_trees": 161,
+  "mask": true
+ }
+}
