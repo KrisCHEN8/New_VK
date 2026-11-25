@@ -10,12 +10,12 @@ ROOT = HERE.parent     # main project folder
 USER = ROOT
 
 
-ROOM = "07-D2-02"
+ROOM = "05-A1-01"
 DATA_DIR = ROOT / f"{ROOM}_data"
 DATA = DATA_DIR / "dfs.pkl"
-RES = ROOT / "results" / f"{ROOM}_per_node"
+RES = ROOT / "results" / f"{ROOM}_per_mode"
 FIG = ROOT / "figure"
-FIG_PREFIX = f"{ROOM}_per_node_"
+FIG_PREFIX = f"{ROOM}_per_mode_"
 
 
 def _import(name):
