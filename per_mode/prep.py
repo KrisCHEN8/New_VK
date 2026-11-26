@@ -10,7 +10,7 @@ ROOT = HERE.parent     # main project folder
 USER = ROOT
 
 
-ROOM = "05-A1-01"
+ROOM = "07-D2-02"
 DATA_DIR = ROOT / f"{ROOM}_data"
 DATA = DATA_DIR / "dfs.pkl"
 RES = ROOT / "results" / f"{ROOM}_per_mode"

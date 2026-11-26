@@ -47,7 +47,7 @@ def rows(info, mode, split):
     return s if mode == "global" else s & (info.mode_used == mode)
 
 
-# tune models to get the best parameters for each mode based on thevalidation set 
+# tune models to get the best parameters for each mode based on the validation set 
 def tune(y, X, info, mono, groups):
     recs, best = [], {}
     for mode in ALL:
