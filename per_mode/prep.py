@@ -59,7 +59,7 @@ def build(data_path):
     info["t_in_mode_h"] = prev["t_in_mode_h"]
     info["split"] = np.where(y.index <= TRAIN_END, "train", np.where(y.index <= VAL_END, "val", "test"))
     # raw signals used for checks, interventions and simulation
-    for c in ["indoor_temperature", "cooling_valve", "VAV_damper", "heating_valve", "outdoor_temperature",
+    for c in ["indoor_temperature", "cooling_valve", "VAV_damper", "outdoor_temperature", # "heating_valve", 
               "solar_radiation", "setpoint", "KB02_supply", "AHU_supply_temperature", "cooling_flow"]:
         info[c] = raw[c].reindex(y.index)
     return G, feats, y, X, info
