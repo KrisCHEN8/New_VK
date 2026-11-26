@@ -60,6 +60,12 @@ def assign_modes(df):
            "outdoor_temperature", "solar_radiation"]
     df.loc[df[key].isna().any(axis=1), "mode"] = "unknown"
 
+    # no residual class: every unknown row inherits the mode of the previous time step
+    # (leading unknowns, which have no previous step, take the first valid mode instead)
+    unknown = df["mode"] == "unknown"
+    df["mode_filled"] = unknown
+    df["mode"] = df["mode"].mask(unknown).ffill().bfill()
+
     # runs = uninterrupted stretches of one mode
     df["run_id"] = (df["mode"] != df["mode"].shift()).cumsum()
     g = df.groupby("run_id")
@@ -75,7 +81,7 @@ def assign_modes(df):
 
 def main():
     p = argparse.ArgumentParser(description="Split operational data into different modes.")
-    p.add_argument("room", nargs="?", default="05-A1-01",
+    p.add_argument("room", nargs="?", default="07-D4-01",
                    help="room id (default: 07-D2-02)")
     args = p.parse_args()
 
@@ -102,7 +108,7 @@ def main():
     pd.set_option("display.width", 200)
     # print(f"Saved to {out.resolve()}  (runs shorter than {MIN_RUN_H} h dropped)\n")
     print(summary.drop(columns="description").round(2).to_string())
-    print("\nunclassified rows:", int((df["mode"] == "unknown").sum()))
+    print("\nunknown rows reassigned to previous mode:", int(df["mode_filled"].sum()))
 
 
 if __name__ == "__main__":

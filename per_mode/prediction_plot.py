@@ -3,6 +3,8 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.dates as mdates
+import matplotlib.lines
+import matplotlib.patches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -66,7 +68,7 @@ def fig_examples():
     # measured temperature: the first step of every forecast covers each 30-min slot once
     meas = pd.Series(rec["obs"][:, 0], index=st + step)
     ahead = {k: pd.Series(rec[k][:, -1], index=st + H * step) for k in ("switched_xgb_causal", "global_xgb")}
-    weeks = {"Summer week, June 2024": ("2024-06-10", 7), "Summer week, August 2024": ("2024-08-05", 7)}
+    weeks = {"Summer week, July 2024": ("2024-07-15", 7), "Summer week, August 2024": ("2024-08-05", 7)}
     fig, ax = plt.subplots(1, 2, figsize=(14, 4.4), sharey=False)
     for j, (name, (d0, n)) in enumerate(weeks.items()):
         t0 = pd.Timestamp(d0); t1 = t0 + pd.Timedelta(days=n)
@@ -94,7 +96,7 @@ def fig_examples_freerun():
     t = pd.DatetimeIndex((st.values[:, None] + np.arange(1, H + 1)[None, :] * step.to_timedelta64()).ravel())
     meas = pd.Series(fr["obs"].ravel(), index=t)
     sim = {k: pd.Series(fr[k].ravel(), index=t) for k in ("switched_xgb_causal", "global_xgb")}
-    weeks = {"Summer week, June 2024": ("2024-06-10", 7), "Summer week, August 2024": ("2024-08-05", 7)}
+    weeks = {"Summer week, July 2024": ("2024-07-15", 7), "Summer week, August 2024": ("2024-08-05", 7)}
     fig, ax = plt.subplots(1, 2, figsize=(14, 4.4), sharey=False)
     for j, (name, (d0, n)) in enumerate(weeks.items()):
         t0 = pd.Timestamp(d0); t1 = t0 + pd.Timedelta(days=n)
@@ -116,6 +118,64 @@ def fig_examples_freerun():
     fig.legend(*ax[0].get_legend_handles_labels(), frameon=False, loc="upper center", ncol=3, fontsize=9)
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     fig.savefig(FIG / f"{FIG_PREFIX}_freerun24h.png", dpi=300)
+    plt.close(fig)
+
+
+MODE_ORDER = ["beam_water_air", "beam_air", "off_no_sun", "off_sunny"]
+
+
+def _step_modes(index):
+    """Mode the switch uses at each step: the mode at t-1 (as in prep.build), 'other' outside the four modes."""
+    md = fm.assign_modes(fm.add_features(fm.load(DATA)).loc[fm.START:fm.END])
+    m = md["mode"].shift(1, freq="30min").reindex(index)
+    return m.where(m.isin([k for k in MODE_LAB if k != "other"]), "other")
+
+
+def _errors(pkl, last_step_only, kind="switched_xgb_causal"):
+    """Prediction error (predicted - measured, K) of one method, indexed by the time of the predicted step."""
+    r = pd.read_pickle(pkl)
+    st = pd.DatetimeIndex(r["starts"])
+    H = r["obs"].shape[1]
+    step = pd.Timedelta("30min").to_timedelta64()
+    if last_step_only:          # 3 h recursive: one error per start, at the 3 h-ahead step
+        t = st + H * pd.Timedelta("30min")
+        err = r[kind][:, -1] - r["obs"][:, -1]
+    else:                       # 24 h free-run: every step of every day
+        t = pd.DatetimeIndex((st.values[:, None] + np.arange(1, H + 1)[None, :] * step).ravel())
+        err = (r[kind] - r["obs"]).ravel()
+    return pd.Series(err, index=t).dropna()
+
+
+def _violins(ax, err, modes):
+    present = [m for m in MODE_ORDER if (modes == m).sum() > 1]
+    x = np.arange(len(present))
+    parts = ax.violinplot([err[modes == m].values for m in present], positions=x, widths=0.7,
+                          showextrema=False, showmedians=True, points=200)
+    for b, m in zip(parts["bodies"], present):
+        b.set_facecolor(MODE_COL[m]); b.set_edgecolor(MODE_COL[m]); b.set_alpha(0.7); b.set_linewidth(0.8)
+    parts["cmedians"].set_color(T1); parts["cmedians"].set_linewidth(1.2)
+    ax.axhline(0, color=T2, lw=0.8, zorder=0)
+    ax.set_xticks(x, [f"{MODE_LAB[m]}\nn = {(modes == m).sum():,}" for m in present])
+    ax.grid(axis="x", visible=False)
+    ax.set_ylabel("Error, predicted − measured (K)")
+    # a few extreme errors would flatten the violins: show the central 99 % of all errors
+    lo, hi = np.nanpercentile(err.values, [0.5, 99.5])
+    pad = 0.05 * (hi - lo)
+    ax.set_ylim(lo - pad, hi + pad)
+
+
+def fig_error_by_mode():
+    """Distribution of the Switched Model's prediction error in each mode (violin = KDE, line = median)."""
+    rec = _errors(RES / "recursive3h_test.pkl", last_step_only=True)
+    fr = _errors(RES / "freerun_test.pkl", last_step_only=False)
+    modes_all = _step_modes(rec.index.union(fr.index))
+    fig, ax = plt.subplots(1, 2, figsize=(13, 4.8))
+    _violins(ax[0], rec, modes_all.reindex(rec.index))
+    title(ax[0], "3 h recursive forecast")
+    _violins(ax[1], fr, modes_all.reindex(fr.index))
+    title(ax[1], "24 h recursive simulation")
+    fig.tight_layout()
+    fig.savefig(FIG / f"{FIG_PREFIX}_error_by_mode.png", dpi=300)
     plt.close(fig)
 
 
@@ -173,6 +233,6 @@ if __name__ == "__main__":
     # fig_performance()
     fig_examples()
     fig_examples_freerun()
-    # fig_soft_switch()
+    fig_error_by_mode()
     # fig_attribution()
     print("figures ->", FIG)

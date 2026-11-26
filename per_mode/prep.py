@@ -52,9 +52,9 @@ def build(data_path):
     prev = md[["mode", "in_mode_file", "run_id", "t_in_mode_h"]].shift(1, freq="30min")   # mode at t-1
     prev = prev.reindex(y.index)
     info = pd.DataFrame(index=y.index)
-    info["mode"] = prev["mode"].fillna("unknown")
+    info["mode"] = prev["mode"]
     info["in_mode_file"] = prev["in_mode_file"].fillna(False).astype(bool)
-    info["mode_used"] = np.where(info.in_mode_file, info["mode"], "other")
+    info["mode_used"] = info["mode"]
     info["run_id"] = prev["run_id"]
     info["t_in_mode_h"] = prev["t_in_mode_h"]
     info["split"] = np.where(y.index <= TRAIN_END, "train", np.where(y.index <= VAL_END, "val", "test"))

@@ -13,7 +13,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 RES.mkdir(parents=True, exist_ok=True)
-ALL = MODES + ["other", "global"]      # "other" = steps outside the saved mode runs (transitions)
+ALL = MODES + ["global"]
 
 GRID = dict(max_depth=[2, 4, 6, 8], min_child_weight=[10, 50], reg_lambda=[1.0, 5.0, 10.0])
 MASK_TOL = 0.05   # keep the physically clean masked model unless unmasked is >5% better on validation

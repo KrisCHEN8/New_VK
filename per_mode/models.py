@@ -13,7 +13,6 @@ INACTIVE = {
     "beam_air": BEAM_WATER,
     "off_no_sun": BEAM_WATER + BEAM_AIR,
     "off_sunny": BEAM_WATER + BEAM_AIR,
-    "other": [],
     "global": [],
 }
 
