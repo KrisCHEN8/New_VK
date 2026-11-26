@@ -18,10 +18,11 @@ SEASON = {12: "winter", 1: "winter", 2: "winter", 3: "spring", 4: "spring", 5: "
 def decompose(xg, y, X, info):
     parts = []
     fit_rows = info.split.isin(["train", "val"])
+    used = S.switch_modes(info)          # the model that predicts each step
     for mode in MODES + ["other"]:
         mdl = xg[mode] if mode in xg else xg["global"]
-        s = info.mode_used == mode
-        fr = (fit_rows & s) if mode in xg else fit_rows
+        s = used == mode
+        fr = (fit_rows & (info.mode_used == mode)) if mode in xg else fit_rows      # the model's own fit rows
         g_all = mdl.group_contributions(X.loc[s, mdl.cols])
         g_fit = mdl.group_contributions(X.loc[fr, mdl.cols])
         mean_fit = g_fit.mean()
@@ -32,7 +33,7 @@ def decompose(xg, y, X, info):
     D = D[["baseline"] + [g for g in GROUP_ORDER if g in D]]
     D["pred"] = D.sum(axis=1)
     D["obs"] = y
-    D["mode"] = info.mode_used
+    D["mode"] = used
     return D
 
 

@@ -24,9 +24,9 @@ plt.rcParams.update({"font.size": 10, "axes.edgecolor": GRID, "axes.labelcolor":
 MODE_COL = {"beam_water_air": AQUA, "beam_air": VIOLET, "off_no_sun": BLUE, "off_sunny": YELLOW, "other": GREY}
 MODE_LAB = {"beam_water_air": "Beam water + air", "beam_air": "Air only", "off_no_sun": "Off, no sun",
             "off_sunny": "Off, sunny", "other": "Transitions (other)"}
-METH_LAB = {"switched_xgb_other": "Switched XGBoost", "global_xgb": "Global XGBoost",
+METH_LAB = {"switched_xgb_causal": "Switched Model", "global_xgb": "Global Model",
             "persistence": "Persistence"}
-METH_STYLE = [("persistence", GREY, "--", 1.6), ("global_xgb", BLUE, "-", 1.6), ("switched_xgb_other", AQUA, "-", 2.2)]
+METH_STYLE = [("persistence", GREY, "--", 1.6), ("global_xgb", BLUE, "-", 1.6), ("switched_xgb_causal", AQUA, "-", 2.2)]
 
 
 def title(ax, t):
@@ -65,22 +65,57 @@ def fig_examples():
     step = pd.Timedelta("30min")
     # measured temperature: the first step of every forecast covers each 30-min slot once
     meas = pd.Series(rec["obs"][:, 0], index=st + step)
-    ahead = {k: pd.Series(rec[k][:, -1], index=st + H * step) for k in ("switched_xgb_other", "global_xgb")}
-    weeks = {"Summer week, June 2024": ("2024-06-10", 7), "Summer week, July 2024": ("2024-07-08", 7)}
+    ahead = {k: pd.Series(rec[k][:, -1], index=st + H * step) for k in ("switched_xgb_causal", "global_xgb")}
+    weeks = {"Summer week, June 2024": ("2024-06-10", 7), "Summer week, August 2024": ("2024-08-05", 7)}
     fig, ax = plt.subplots(1, 2, figsize=(14, 4.4), sharey=False)
     for j, (name, (d0, n)) in enumerate(weeks.items()):
         t0 = pd.Timestamp(d0); t1 = t0 + pd.Timedelta(days=n)
         grid = pd.date_range(t0 + step, t1, freq=step)
         ax[j].plot(grid, meas.reindex(grid).values, color=T1, lw=1.6, label="Measured")
-        ax[j].plot(grid, ahead["switched_xgb_other"].reindex(grid).values, color=AQUA, lw=1.8,
-                   label="Switched XGBoost")
+        ax[j].plot(grid, ahead["switched_xgb_causal"].reindex(grid).values, color=AQUA, lw=1.8,
+                   label="Switched Model")
         ax[j].plot(grid, ahead["global_xgb"].reindex(grid).values, color=BLUE, lw=1.1, ls="--",
-                   label="Global XGBoost")
+                   label="Global Model")
         ax[j].xaxis.set_major_locator(mdates.DayLocator()); ax[j].xaxis.set_major_formatter(mdates.DateFormatter("%a %d %b"))
         ax[j].set_ylabel("Indoor temperature (°C)"); title(ax[j], name)
     fig.legend(*ax[0].get_legend_handles_labels(), frameon=False, loc="upper center", ncol=3, fontsize=9)
     fig.tight_layout(rect=(0, 0, 1, 0.94))
-    fig.savefig(FIG / f"{FIG_PREFIX}_recursive3h_examples.png", dpi=300)
+    fig.savefig(FIG / f"{FIG_PREFIX}_recursive3h.png", dpi=300)
+    plt.close(fig)
+
+
+def fig_examples_freerun():
+    """Same weeks as fig_examples, but each day is a 24 h free-run simulation restarted at midnight."""
+    fr = pd.read_pickle(RES / "freerun_test.pkl")
+    st = pd.DatetimeIndex(fr["starts"])
+    H = fr["obs"].shape[1]
+    step = pd.Timedelta("30min")
+    # step k of the run started at s is at s + k*step; the days do not overlap, so concatenate them
+    t = pd.DatetimeIndex((st.values[:, None] + np.arange(1, H + 1)[None, :] * step.to_timedelta64()).ravel())
+    meas = pd.Series(fr["obs"].ravel(), index=t)
+    sim = {k: pd.Series(fr[k].ravel(), index=t) for k in ("switched_xgb_causal", "global_xgb")}
+    weeks = {"Summer week, June 2024": ("2024-06-10", 7), "Summer week, August 2024": ("2024-08-05", 7)}
+    fig, ax = plt.subplots(1, 2, figsize=(14, 4.4), sharey=False)
+    for j, (name, (d0, n)) in enumerate(weeks.items()):
+        t0 = pd.Timestamp(d0); t1 = t0 + pd.Timedelta(days=n)
+        grid = pd.date_range(t0 + step, t1, freq=step)
+        ax[j].plot(grid, meas.reindex(grid).values, color=T1, lw=1.6, label="Measured")
+        # break the simulated lines at midnight, where each simulation is reset to the measured temperature
+        for k in range(n):
+            d = t0 + pd.Timedelta(days=k)
+            g = pd.date_range(d + step, d + pd.Timedelta(days=1), freq=step)
+            ax[j].plot(g, sim["switched_xgb_causal"].reindex(g).values, color=AQUA, lw=1.8,
+                       label="Switched Model" if k == 0 else None)
+            ax[j].plot(g, sim["global_xgb"].reindex(g).values, color=BLUE, lw=1.1, ls="--",
+                       label="Global Model" if k == 0 else None)
+        for k in range(1, n):
+            ax[j].axvline(t0 + pd.Timedelta(days=k), color=GRID, lw=1.0, zorder=0)
+        ax[j].set_xlim(grid[0] - step, grid[-1])
+        ax[j].xaxis.set_major_locator(mdates.DayLocator()); ax[j].xaxis.set_major_formatter(mdates.DateFormatter("%a %d %b"))
+        ax[j].set_ylabel("Indoor temperature (°C)"); title(ax[j], name)
+    fig.legend(*ax[0].get_legend_handles_labels(), frameon=False, loc="upper center", ncol=3, fontsize=9)
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.savefig(FIG / f"{FIG_PREFIX}_freerun24h.png", dpi=300)
     plt.close(fig)
 
 
@@ -137,5 +172,7 @@ def fig_examples():
 if __name__ == "__main__":
     # fig_performance()
     fig_examples()
+    fig_examples_freerun()
+    # fig_soft_switch()
     # fig_attribution()
     print("figures ->", FIG)

@@ -9,14 +9,14 @@ Uses `filter_modes.py` and `GCM_generation.py` from the main folder unchanged. A
 python prep.py        # modes (your filter) + design matrix (your graph's node_frame)
 python study.py all   # tuning, final fit, 24 h free-run + 3 h recursive evaluation  -> results/<ROOM>_per_node/
 python attribute.py   # exact group decomposition + sanity checks                     -> results/<ROOM>_per_node/
-python plots.py       # figures                                                       -> figure/
+python prediction_plot.py   # figures                                                 -> figure/
 ```
 `python study.py final` reuses the tuned settings in `results/<ROOM>_per_node/best_params.json`.
 
 ## Set-up
 * Target: the graph's `indoor_temperature` mechanism, i.e. y = T(t) - T(t-1) from inputs at t-1 (+ calendar).
   Each step belongs to the mode at t-1, the interval in which its inputs act. Steps outside the runs your
-  filter saves (runs < 4 h, unclassified) are labelled `other` (mostly start-up / shut-down transitions).
+  filter saves (runs < `MIN_RUN_H` = 2 h, unclassified) are labelled `other` (mostly start-up / shut-down transitions).
 * Split: train 2022-03..2023-06, validation 2023 H2 (tuning, early stopping),
   final refit on train + validation, test = 2024 (never used for fitting or choices).
 * Model: XGBoost with the graph's monotone + interaction (group) constraints.
@@ -25,7 +25,10 @@ python plots.py       # figures                                                 
 * Methods compared:
   * **Persistence**: temperature stays at its value at the start.
   * **Global XGBoost**: one model for all steps.
-  * **Switched XGBoost + transition model**: the model of the step's mode, and an `other` model for transition steps.
+  * **Switched XGBoost** (`switched_xgb_causal`, past data only): the model of the step's mode from the first
+    step of the mode, whatever the length of the run; the `other` model only where there is no valid mode.
+    The mode models are still trained on runs >= `MIN_RUN_H` only, and `other` on the rest.
+* Paired bootstrap over the free-run days (`N_BOOT` = 2000) gives a 95% interval for RMSE differences.
 * Evaluation (2024, recursive: predicted T fed back, valves/dampers/weather/calendar measured):
   * **24 h free-run**, restarted every midnight (48 steps).
   * **3 h recursive forecast**, restarted at every 30-min step (6 steps).
@@ -33,11 +36,14 @@ python plots.py       # figures                                                 
 ## Main results (2024 test)
 | | 3 h recursive RMSE (K) | 24 h free-run RMSE (K) |
 |---|---|---|
-| **Switched XGBoost + transition model** | *re-run* | 0.55 |
-| Global XGBoost | *re-run* | 0.62 |
-| Persistence | *re-run* | 1.37 |
+| **Switched XGBoost** (past data only) | 0.32 | 0.59 |
+| Global XGBoost | 0.35 | 0.73 |
+| Persistence | 0.51 | 1.37 |
+
+Switched vs global, 24 h free-run: -0.15 K, 95% bootstrap interval [-0.18, -0.11].
 
 ## Files in results/<ROOM>_per_node/
 `tuning.csv`, `best_params.json`, `final_models.pkl` (fitted models),
 `freerun_test.{pkl,csv}`, `recursive3h_test.{pkl,csv}` (csv = overall RMSE and MAE per method),
+`freerun_test_bootstrap.csv`,
 `mode_K_per_day*.csv`, `component_*.csv`, `sanity_checks.csv`, `decomposition.pkl` (per-step split).

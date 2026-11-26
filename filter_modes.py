@@ -13,7 +13,7 @@ START, END = "2022-03-01", "2024-10-01"
 BEAM_ON = 5.0  # cooling_valve  above which the chilled water counts as on, %
 VAV_ON = 1.0    # VAV_damper % above which the primary air counts as ON
 SUN_ON = 20.0   # solar_radiation W/m2 above which a period counts as "sunny"
-MIN_RUN_H = 4.0   # keep only uninterrupted runs of the same mode at least this long
+MIN_RUN_H = 1.0   # keep only uninterrupted runs of the same mode at least this long
 DT_H = 0.5   # sampling step in hours
 CP_WATER = 4186.0  # J/(kg K), water density taken as 1 kg/l
 

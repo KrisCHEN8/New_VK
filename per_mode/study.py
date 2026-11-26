@@ -19,10 +19,11 @@ GRID = dict(max_depth=[2, 4, 6, 8], min_child_weight=[10, 50], reg_lambda=[1.0, 
 MASK_TOL = 0.05   # keep the physically clean masked model unless unmasked is >5% better on validation
 
 # methods compared: switched, global xgboost, and persistence
-KINDS = ["global_xgb", "switched_xgb_other"]
+KINDS = ["global_xgb", "switched_xgb_causal"]
 STEP = pd.Timedelta("30min")
 H_FREE = 48   # 24 h free-run
 H_REC = 6   # 3 h recursive forecast
+N_BOOT = 2000   # bootstrap resamples of the free-run days
 
 
 def rmse(e): 
@@ -100,11 +101,20 @@ def predict_by_mode(models, X, modes):
     return p
 
 
-def assemble(xg, X, modes, kind):
+def switch_modes(info):
+    """
+    Model that the switch uses for each step, from past data only: the model of the step's mode (at t-1) from
+    the first step of the mode; 'other' where there is no valid mode.
+    """
+    return info["mode"].where(info["mode"].isin(MODES), "other")
+
+
+def assemble(xg, X, rows, kind):
+    """Prediction of one method; 'rows' = the info rows of the steps in X."""
     if kind == "global_xgb":
         return xg["global"].predict(X[xg["global"].cols])
-    if kind == "switched_xgb_other":             # mode models + transition ('other') model
-        return predict_by_mode(xg, X, modes)
+    if kind == "switched_xgb_causal":
+        return predict_by_mode(xg, X, switch_modes(rows))
     raise ValueError(kind)
 
 
@@ -128,7 +138,7 @@ def simulate(G, feats, X_index, models_fn, info, starts, horizon):
         inp = feats.loc[tk, inputs_cols].copy()
         inp[f"{T}_lag1"] = Tsim
         Xk = gcm.design_matrix(G, T, inp)
-        dT = models_fn(Xk, info.mode_used.reindex(tk))
+        dT = models_fn(Xk, info.reindex(tk))
         Tsim = Tsim + dT
         out[:, k - 1] = Tsim
         obs[:, k - 1] = T0.reindex(tk).values
@@ -139,7 +149,7 @@ def run_sims(G, feats, X, info, xg, starts, horizon):
     """Simulate every method + persistence from the same starts."""
     sims = {}
     for k in KINDS:
-        fn = (lambda kk: (lambda Xk, modes: assemble(xg, Xk, modes, kk)))(k)
+        fn = (lambda kk: (lambda Xk, rows: assemble(xg, Xk, rows, kk)))(k)
         ok, sims[k], obs = simulate(G, feats, X.index, fn, info, starts, horizon)
     sims["persistence"] = np.repeat(feats[T].reindex(ok).values[:, None], horizon, axis=1)
     return ok, sims, obs
@@ -150,6 +160,25 @@ def sim_metrics(sims, obs):
     v = ~np.isnan(obs)
     return pd.DataFrame({k: {"rmse_K": rmse((p - obs)[v]), "mae_K": mae((p - obs)[v])}
                          for k, p in sims.items()}).T
+
+
+def paired_bootstrap(sims, obs, pairs, n_boot=N_BOOT, seed=0):
+    """
+    Difference in pooled RMSE, a - b (negative = a better), with a 95% interval from resampling whole
+    simulations (days) with replacement; both methods get the same resampled days.
+    """
+    v = ~np.isnan(obs)
+    n = v.sum(axis=1)
+    sse = {k: np.where(v, (p - obs) ** 2, 0.0).sum(axis=1) for k, p in sims.items()}
+    idx = np.random.default_rng(seed).integers(0, len(obs), (n_boot, len(obs)))
+    out = []
+    for a, b in pairs:
+        d = np.sqrt(sse[a][idx].sum(1) / n[idx].sum(1)) - np.sqrt(sse[b][idx].sum(1) / n[idx].sum(1))
+        out.append(dict(a=a, b=b, rmse_a_K=np.sqrt(sse[a].sum() / n.sum()), rmse_b_K=np.sqrt(sse[b].sum() / n.sum()),
+                        diff_K=np.sqrt(sse[a].sum() / n.sum()) - np.sqrt(sse[b].sum() / n.sum()),
+                        ci95_lo=np.percentile(d, 2.5), ci95_hi=np.percentile(d, 97.5),
+                        share_a_better=float((d < 0).mean())))
+    return pd.DataFrame(out)
 
 
 def main(stage="all"):
@@ -182,6 +211,10 @@ def main(stage="all"):
     summ = sim_metrics(sims, obs)
     summ.to_csv(RES / "freerun_test.csv")
     print(f"\n24 h free-run over {len(ok)} days of 2024:\n", summ.round(3).to_string(), flush=True)
+    # bs = paired_bootstrap(sims, obs, [("switched_xgb_causal", "global_xgb"),
+    #                                   ("switched_xgb_causal", "persistence")])
+    # bs.to_csv(RES / "freerun_test_bootstrap.csv", index=False)
+    # print("\npaired bootstrap over days (RMSE a - b, K):\n", bs.round(4).to_string(index=False), flush=True)
 
 
 if __name__ == "__main__":
