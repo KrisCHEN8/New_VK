@@ -25,6 +25,11 @@ H_FREE = 48   # 24 h free-run
 H_REC = 6   # 3 h recursive forecast
 N_BOOT = 2000   # bootstrap resamples of the free-run days
 
+# model selection by the 24 h free-run error on the validation days
+DEFAULT = dict(max_depth=4, min_child_weight=50, reg_lambda=5.0)   # start of the coordinate search
+TUNE_PATIENCE = 300   # one-step early stopping only caps the trees; the extra trees are kept for the free-run choice
+TREE_EVERY = 50     # tree counts compared by free-run: every TREE_EVERY trees + the one-step optimum
+
 
 def rmse(e): 
     return float(np.sqrt(np.mean(np.square(e))))
@@ -47,26 +52,64 @@ def rows(info, mode, split):
     return s if mode == "global" else s & (info.mode_used == mode)
 
 
-# tune models to get the best parameters for each mode based on the validation set 
-def tune(y, X, info, mono, groups):
-    recs, best = [], {}
+def kind_of(mode):
+    """The method whose free-run a model is judged by."""
+    return "global_xgb" if mode == "global" else "switched_xgb_causal"
+
+
+def tree_counts(n_available, n_one_step):
+    """Tree counts compared by free-run error."""
+    return sorted(set(range(TREE_EVERY, n_available + 1, TREE_EVERY)) | {int(n_one_step)})
+
+
+# tune hyperparameters, number of trees and masking by the 24 h free-run error on the validation days
+def tune(G, feats, y, X, info, mono, groups):
+    """
+    Selection by 24 h free-run RMSE on validation: the models act together in the switched free-run, so the
+    search is coordinate-wise. All models start from DEFAULT; then, global first (the switched model falls back
+    on it where there is no valid mode) and each mode in turn, every grid point x mask x tree count is scored by
+    the validation free-run of its method with the other models at their current choice; the best is kept.
+    Trees are fitted on train with one-step early stopping (patience TUNE_PATIENCE) to cap the tree count.
+    """
+    ss_val = SimSet(G, feats, X.index, info, day_starts(info, ["val"]), H_FREE)
+    print(f"  validation free-runs: {len(ss_val.starts)} days", flush=True)
+
+    # start point
+    cur, best = {}, {}
     for mode in ALL:
         tr, va = rows(info, mode, "train"), rows(info, mode, "val")
+        cols = M.mode_columns(list(X.columns), mode, True)
+        cur[mode] = M.XGBGraph(mono, groups, **DEFAULT).fit(X.loc[tr, cols], y[tr], X.loc[va, cols], y[va])
+        best[mode] = dict(**DEFAULT, n_trees=int(cur[mode].best_n), mask=True)
+    # print("  start: " + "  ".join(f"{k}={freerun_rmse(ss_val, cur, k):.4f}" for k in KINDS), flush=True)
+
+    # coordinate search
+    recs = []
+    for mode in ["global"] + MODES:
+        kind = kind_of(mode)
+        tr, va = rows(info, mode, "train"), rows(info, mode, "val")
+        top = {}    # mask
         for mask in ([True, False] if M.INACTIVE.get(mode) else [True]):
             cols = M.mode_columns(list(X.columns), mode, mask)
             for md, mcw, lam in itertools.product(*GRID.values()):
-                m = M.XGBGraph(mono, groups, max_depth=md, min_child_weight=mcw, reg_lambda=lam)
+                m = M.XGBGraph(mono, groups, max_depth=md, min_child_weight=mcw, reg_lambda=lam,
+                               early_stopping_rounds=TUNE_PATIENCE)
                 m.fit(X.loc[tr, cols], y[tr], X.loc[va, cols], y[va])
-                recs.append(dict(mode=mode, mask=mask, max_depth=md, min_child_weight=mcw,
-                                 reg_lambda=lam, n_trees=m.best_n, val_rmse=rmse(y[va] - m.predict(X.loc[va, cols]))))
-        cand = pd.DataFrame([x for x in recs if x["mode"] == mode]).sort_values("val_rmse")
-        r = cand[cand["mask"]].iloc[0]
-        if (~cand["mask"]).any() and cand[~cand["mask"]].val_rmse.iloc[0] < (1 - MASK_TOL) * r.val_rmse:
-            r = cand[~cand["mask"]].iloc[0]
-        best[mode] = dict(max_depth=int(r.max_depth), min_child_weight=int(r.min_child_weight),
-                          reg_lambda=float(r.reg_lambda), n_trees=int(r.n_trees), mask=bool(r["mask"]))
-        print(f"  tuned {mode:15s} {best[mode]}  val_rmse={r.val_rmse:.4f}", flush=True)
-    # pd.DataFrame(recs).to_csv(RES / "tuning.csv", index=False)
+                for n in tree_counts(m.n_available, m.best_n):
+                    m.best_n = n
+                    err = freerun_rmse(ss_val, {**cur, mode: m}, kind)
+                    s = dict(max_depth=md, min_child_weight=mcw, reg_lambda=lam, n_trees=n, mask=mask)
+                    recs.append(dict(mode=mode, **s, val_fr24_rmse=err,
+                                     val_rmse=rmse(y[va] - m.predict(X.loc[va, cols]))))
+                    if mask not in top or err < top[mask][0]:
+                        top[mask] = (err, s, m)
+        err, s, m = top[True]
+        if False in top and top[False][0] < (1 - MASK_TOL) * err:
+            err, s, m = top[False]
+        m.best_n = s["n_trees"]
+        cur[mode], best[mode] = m, s
+        print(f"  tuned {mode:15s} {s}  val_fr24_rmse={err:.4f}", flush=True)
+    pd.DataFrame(recs).to_csv(RES / "tuning.csv", index=False)
     json.dump(best, open(RES / "best_params.json", "w"), indent=1)
     return best
 
@@ -119,40 +162,70 @@ def assemble(xg, X, rows, kind):
 
 
 # recursive simulation
+def method_fn(xg, kind):
+    return lambda Xk, rows: assemble(xg, Xk, rows, kind)
+
+
+def day_starts(info, splits, horizon=H_FREE):
+    """Midnights whose whole free-run (steps 1..horizon) lies in the given split(s)."""
+    days = pd.date_range(info.index.min().normalize(), info.index.max().normalize(), freq="D")
+    return [d for d in days
+            if info["split"].reindex(pd.date_range(d + STEP, periods=horizon, freq=STEP)).isin(splits).all()]
+
+
+class SimSet:
+    """
+    Recursive simulations from fixed starts: from the measured temperature at each start, roll forward 'horizon'
+    steps feeding the predicted temperature back into indoor_temperature_lag1 and the graph's derived terms
+    (recomputed with gcm.design_matrix). Valves, dampers, supply temperatures, weather, CO2 and calendar stay
+    measured. The measured inputs are gathered once, so many models can be simulated cheaply.
+    """
+
+    def __init__(self, G, feats, X_index, info, starts, horizon):
+        idx = pd.DatetimeIndex(X_index)
+        T0 = feats[T]
+        self.G, self.horizon = G, horizon
+        self.starts = pd.DatetimeIndex(
+            [s for s in starts
+             if pd.notna(T0.get(s, np.nan)) and all((s + k * STEP) in idx for k in range(1, horizon + 1))])
+        self.T0 = T0.reindex(self.starts).values.astype(float)          # T at the start
+        cols = gcm.mechanism_inputs(G, T)
+        self.inp, self.rows = [], []
+        self.obs = np.full((len(self.starts), horizon), np.nan)
+        for k in range(1, horizon + 1):
+            tk = self.starts + k * STEP
+            self.inp.append(feats.loc[tk, cols])
+            self.rows.append(info.reindex(tk))
+            self.obs[:, k - 1] = T0.reindex(tk).values
+
+    def run(self, models_fn):
+        """Simulated T (starts x horizon)."""
+        Tsim = self.T0.copy()
+        out = np.full_like(self.obs, np.nan)
+        for k in range(self.horizon):
+            Xk = gcm.design_matrix(self.G, T, self.inp[k].assign(**{f"{T}_lag1": Tsim}))
+            Tsim = Tsim + models_fn(Xk, self.rows[k])
+            out[:, k] = Tsim
+        return out
+
+
+def freerun_rmse(ss, xg, kind):
+    out = ss.run(method_fn(xg, kind))
+    v = ~np.isnan(ss.obs)
+    return rmse((out - ss.obs)[v])
+
+
 def simulate(G, feats, X_index, models_fn, info, starts, horizon):
-    """
-    Recursive simulation: from the measured temperature at each start, roll forward 'horizon' steps feeding the
-    predicted temperature back into indoor_temperature_lag1 and the graph's derived terms (recomputed with
-    gcm.design_matrix). Valves, dampers, supply temperatures, weather, CO2 and calendar stay measured.
-    """
-    inputs_cols = gcm.mechanism_inputs(G, T)
-    idx = pd.DatetimeIndex(X_index)
-    T0 = feats[T]
-    ok = [s for s in starts
-          if pd.notna(T0.get(s, np.nan)) and all((s + k * STEP) in idx for k in range(1, horizon + 1))]
-    Tsim = T0.reindex(ok).values.astype(float)          # T at the start
-    out = np.full((len(ok), horizon), np.nan)
-    obs = np.full((len(ok), horizon), np.nan)
-    for k in range(1, horizon + 1):
-        tk = pd.DatetimeIndex([s + k * STEP for s in ok])
-        inp = feats.loc[tk, inputs_cols].copy()
-        inp[f"{T}_lag1"] = Tsim
-        Xk = gcm.design_matrix(G, T, inp)
-        dT = models_fn(Xk, info.reindex(tk))
-        Tsim = Tsim + dT
-        out[:, k - 1] = Tsim
-        obs[:, k - 1] = T0.reindex(tk).values
-    return pd.DatetimeIndex(ok), out, obs
+    ss = SimSet(G, feats, X_index, info, starts, horizon)
+    return ss.starts, ss.run(models_fn), ss.obs
 
 
 def run_sims(G, feats, X, info, xg, starts, horizon):
     """Simulate every method + persistence from the same starts."""
-    sims = {}
-    for k in KINDS:
-        fn = (lambda kk: (lambda Xk, rows: assemble(xg, Xk, rows, kk)))(k)
-        ok, sims[k], obs = simulate(G, feats, X.index, fn, info, starts, horizon)
-    sims["persistence"] = np.repeat(feats[T].reindex(ok).values[:, None], horizon, axis=1)
-    return ok, sims, obs
+    ss = SimSet(G, feats, X.index, info, starts, horizon)
+    sims = {k: ss.run(method_fn(xg, k)) for k in KINDS}
+    sims["persistence"] = np.repeat(ss.T0[:, None], horizon, axis=1)
+    return ss.starts, sims, ss.obs
 
 
 def sim_metrics(sims, obs):
@@ -187,7 +260,7 @@ def main(stage="all"):
     print(f"data ready: {len(y)} steps  ({time.time()-t0:.0f}s)", flush=True)
 
     if stage in ("all", "tune") or not (RES / "best_params.json").exists():
-        best = tune(y, X, info, mono, groups)
+        best = tune(G, feats, y, X, info, mono, groups)
     else:
         best = json.load(open(RES / "best_params.json"))
 

@@ -50,6 +50,11 @@ class XGBGraph:
             self.best_n = self.m.best_iteration + 1
         return self
 
+    @property
+    def n_available(self):
+        """Trees built; with early stopping this includes the trees after the best one-step iteration."""
+        return self.m.get_booster().num_boosted_rounds()
+
     def predict(self, X):
         return self.m.predict(X[self.cols], iteration_range=(0, self.best_n))
 

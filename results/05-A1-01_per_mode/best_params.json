@@ -1,37 +1,41 @@
 {
  "beam_water_air": {
   "max_depth": 2,
-  "min_child_weight": 50,
+  "min_child_weight": 10,
   "reg_lambda": 1.0,
-  "n_trees": 204,
+  "n_trees": 500,
   "mask": true
  },
  "beam_air": {
   "max_depth": 2,
   "min_child_weight": 10,
-  "reg_lambda": 1.0,
-  "n_trees": 1074,
+  "reg_lambda": 5.0,
+  "n_trees": 250,
   "mask": true
  },
  "off_no_sun": {
-  "max_depth": 4,
-  "min_child_weight": 50,
-  "reg_lambda": 1.0,
-  "n_trees": 239,
+  "max_depth": 2,
+  "min_child_weight": 10,
+  "reg_lambda": 5.0,
+  "n_trees": 200,
   "mask": true
  },
  "off_sunny": {
-  "max_depth": 4,
-  "min_child_weight": 10,
-  "reg_lambda": 1.0,
-  "n_trees": 378,
+  "max_depth": 2,
+  "min_child_weight": 50,
+  "reg_lambda": 5.0,
+  "n_trees": 473,
   "mask": true
  },
  "global": {
-  "max_depth": 4,
-  "min_child_weight": 50,
+  "max_depth": 8,
+  "min_child_weight": 10,
   "reg_lambda": 5.0,
-  "n_trees": 493,
+  "n_trees": 450,
   "mask": true
+ },
+ "dad_iters": {
+  "global_xgb": 3,
+  "switched_xgb_causal": 2
  }
 }
